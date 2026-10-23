@@ -106,6 +106,12 @@ async def lifespan(app: FastAPI):
     init_db()
     hub.bind_loop(asyncio.get_running_loop())
     scheduler.start()
+    # 上次进程可能是被强杀的，把残留的「进行中」采集任务标记掉
+    with db() as conn:
+        conn.execute(
+            "UPDATE crawl_runs SET status = 'interrupted', finished_at = ? WHERE status = 'running'",
+            (now_iso(),),
+        )
     # 后台预热检索索引：语料大时不把首页请求卡住
     index.warmup_async()
     logger.info(

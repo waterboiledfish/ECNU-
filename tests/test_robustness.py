@@ -63,6 +63,32 @@ def test_index_fast_stats_never_builds(monkeypatch, auth):
     assert stats["chunks"] == 0
 
 
+def test_crawl_start_does_not_deadlock(auth):
+    """曾经的 bug：start() 持锁调用 status()，普通 Lock 直接死锁，整站卡住。"""
+    import time
+
+    from app.services.crawler import CrawlManager
+
+    manager = CrawlManager()
+    manager._run = lambda run_id, sites: None  # 不真的联网
+    result = manager.start([], None)
+    assert result["running"] is True
+
+    started = time.time()
+    state = manager.status()
+    assert time.time() - started < 2, "status() 读取不应被锁住"
+    assert state["run_id"] == result["run_id"]
+    assert state["running"] is True
+
+
+def test_version_has_single_source(client):
+    import app
+    from app.config import settings
+
+    assert app.__version__ == settings.version
+    assert client.get("/api/health").json()["version"] == settings.version
+
+
 def test_study_falls_back_when_bilibili_blocked(monkeypatch):
     from app.services import recs
 

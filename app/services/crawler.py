@@ -18,7 +18,8 @@ from .extract import FetchError
 
 class CrawlManager:
     def __init__(self) -> None:
-        self._lock = threading.Lock()
+        # 可重入锁：start() 内部会再调用 status()，普通 Lock 会直接死锁
+        self._lock = threading.RLock()
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
         self._state: dict[str, Any] = {
@@ -37,7 +38,9 @@ class CrawlManager:
     # ------------------------------------------------------------ public
     def start(self, site_ids: list[int], user_id: int | None = None) -> dict:
         with self._lock:
-            if self._state["running"]:
+            worker = self._thread
+            # 线程已经死了就别再报「正在采集」，否则用户会一直卡在「进行中」
+            if self._state.get("running") and worker is not None and worker.is_alive():
                 raise RuntimeError("已有采集任务正在进行，请等待完成")
             with db() as conn:
                 if site_ids:
@@ -77,12 +80,28 @@ class CrawlManager:
             self._thread = threading.Thread(
                 target=self._run, args=(run_id, sites), name="ecnu-crawler", daemon=True
             )
-            self._thread.start()
-            return self.status()
+            thread = self._thread
+        # 出锁再启动线程：工作线程第一步就会抢这把锁，持锁启动会互相卡住
+        thread.start()
+        return self.status()
 
     def status(self) -> dict:
-        with self._lock:
+        """读取状态。拿不到锁也要返回，绝不能把接口卡死。"""
+        acquired = self._lock.acquire(timeout=2)
+        if not acquired:
+            return {
+                "running": True,
+                "message": "采集状态读取中…",
+                "pages_ok": 0,
+                "pages_failed": 0,
+                "queued": 0,
+                "errors": [],
+                "stalled": True,
+            }
+        try:
             return {**self._state, "errors": list(self._state.get("errors", []))[-10:]}
+        finally:
+            self._lock.release()
 
     def cancel(self) -> dict:
         self._stop.set()

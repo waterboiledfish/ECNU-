@@ -75,7 +75,7 @@ python -m app
 - 文档解析：BeautifulSoup（HTML）、pypdf（PDF）、标准库 zipfile（DOCX）。
 - 任务：后台 asyncio 调度器，跨进程重启后自动补发近期提醒。
 - AI：任何 OpenAI 兼容 `/chat/completions` 接口；流式解析 SSE。
-- 测试：pytest + FastAPI TestClient；95 个用例，默认不访问外部网络。
+- 测试：pytest + FastAPI TestClient；97 个用例，默认不访问外部网络。
 
 ## 目录
 

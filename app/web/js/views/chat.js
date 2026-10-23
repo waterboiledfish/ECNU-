@@ -290,8 +290,11 @@ export async function renderChat(el, ctx) {
     }
     const docs = lib.index ? lib.index.documents : 0;
     const chunks = lib.index ? lib.index.chunks : 0;
+    const building = !!(lib.index && lib.index.building);
     card.innerHTML = `<div class="section-title">${icon('database')} 文件库</div>
-      <p class="small soft" style="line-height:1.7">${docs ? `已索引 <strong>${docs}</strong> 份文件、${chunks} 个片段。` : '还没有采集官网文件，暂时只能给出"依据不足"的提示。'}</p>
+      <p class="small soft" style="line-height:1.7">${docs
+        ? `已索引 <strong>${docs}</strong> 份文件、${chunks} 个片段。${building ? '（索引正在后台更新）' : ''}`
+        : (building ? '正在后台建立检索索引，稍等片刻…' : '还没有采集官网文件，暂时只能给出"依据不足"的提示。')}</p>
       <a class="btn btn-xs btn-soft btn-block mt-10" href="#/sources">${docs ? '管理官网文件' : '去采集官网文件'}</a>`;
   }
 
