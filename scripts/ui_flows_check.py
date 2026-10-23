@@ -277,8 +277,10 @@ def main() -> int:
             """async () => {
               const me = await fetch('/api/auth/me', { credentials: 'same-origin' }).then((r) => r.json());
               const headers = { 'Content-Type': 'application/json', 'X-CSRF-Token': me.csrf };
+              const listing = await fetch('/api/forum/posts?size=20', { credentials: 'same-origin' }).then((r) => r.json());
+              const need = Math.max(0, 6 - (listing.total || 0));
               const ids = [];
-              for (let i = 1; i <= 5; i += 1) {
+              for (let i = 1; i <= need; i += 1) {
                 const response = await fetch('/api/forum/posts', {
                   method: 'POST', credentials: 'same-origin', headers,
                   body: JSON.stringify({
@@ -287,14 +289,15 @@ def main() -> int:
                     tags: ['经验分享'], board: 'exam'
                   })
                 });
-                if (!response.ok) return { ok: false, status: response.status };
+                if (!response.ok) return { ok: false, status: response.status, ids, existing: listing.total };
                 ids.push((await response.json()).post.id);
               }
-              return { ok: true, ids };
+              return { ok: true, ids, existing: listing.total, need };
             }"""
         )
         failures += 0 if check(
-            "论坛示例帖子写入成功", bool(seeded_posts.get("ok")), str(seeded_posts)[:60],
+            "论坛首页示例数据就绪", bool(seeded_posts.get("ok")),
+            f'已有 {seeded_posts.get("existing")} 条，新建 {len(seeded_posts.get("ids") or [])} 条',
         ) else 1
         page.evaluate("() => { location.hash = '#/tasks' }")
         page.wait_for_timeout(400)

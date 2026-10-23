@@ -203,7 +203,7 @@ def create_post(
     background: BackgroundTasks,
     user: dict = Depends(get_current_user),
 ):
-    enforce_rate(request, "forum-post", 8, 600)
+    enforce_rate(request, "forum-post", 20, 600)
     tags = _clean_tags(payload.tags)
     title = payload.title.strip()
     body = payload.body.strip()
