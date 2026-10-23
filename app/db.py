@@ -37,10 +37,18 @@ def init_db() -> None:
     with db() as conn:
         conn.execute("PRAGMA journal_mode = WAL")
         conn.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
+        _migrate(conn)
         _seed_sites(conn)
         _set_meta(conn, "schema_version", "1")
         if _get_meta(conn, "index_version") is None:
             _set_meta(conn, "index_version", "1")
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    """为旧数据库补充新增字段，可重复执行。"""
+    columns = {row["name"] for row in conn.execute("PRAGMA table_info(users)").fetchall()}
+    if "department" not in columns:
+        conn.execute("ALTER TABLE users ADD COLUMN department TEXT NOT NULL DEFAULT ''")
 
 
 def _seed_sites(conn: sqlite3.Connection) -> None:
@@ -70,6 +78,8 @@ def _seed_sites(conn: sqlite3.Connection) -> None:
                 item.get("description", ""),
             ),
         )
+    for key in payload.get("retired_sites", []):
+        conn.execute("UPDATE sites SET enabled = 0 WHERE key = ?", (key,))
     # 站点文档数按实际数据校准（重复执行安全）
     conn.execute(
         """

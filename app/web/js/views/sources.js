@@ -42,6 +42,7 @@ export async function renderSources(el, ctx) {
       <div class="page-head">
         <div><h2>官网文件</h2><p>采集学校官网公开页面与 PDF，建立本地检索库。回答会附上原文链接、来源站点与发布日期。</p></div>
         <div class="page-head-actions">
+          <button class="btn btn-ghost" id="importDoc" type="button" ${data.can_crawl ? '' : 'disabled'}>${icon('link')}导入链接</button>
           <a class="btn btn-ghost" href="#/ask">${icon('sparkles')}去提问</a>
           <button class="btn btn-primary" id="crawlSelected" type="button" ${data.can_crawl ? '' : 'disabled'}>${icon('download')}采集所选</button>
         </div>
@@ -54,6 +55,7 @@ export async function renderSources(el, ctx) {
         <div class="stat"><div class="label">采集状态</div><div class="value" style="font-size:19px">${crawl.running ? '进行中' : '空闲'}</div><div class="hint">${crawl.message || '按需采集，遵守 robots.txt'}</div></div>
       </div>
       ${crawlPanel(crawl)}
+      ${lastRunPanel(data.last_run)}
       <div class="card pad-sm">
         <div class="toolbar mb-12">
           <input class="input" id="siteSearch" placeholder="搜索学院或部门" value="${esc(query)}">
@@ -72,7 +74,7 @@ export async function renderSources(el, ctx) {
           }).join('')}
         </div>
       </div>
-      <div class="notice notice-info">${icon('info')}<div>采集只读取公开页面，遵守目标站点 robots.txt 与访问频率限制。部分学院站点会拦截自动化请求（403 / TLS），此时会记录失败并保留官网链接，不会编造内容。请勿高频重复采集。</div></div>
+      <div class="notice notice-info">${icon('info')}<div>采集只读取公开页面，遵守目标站点 robots.txt 与访问频率限制。部分学院站点会拦截自动化请求（403 / TLS），此时会记录失败并保留官网链接，不会编造内容。没抓到的具体文件，可以用右上角「导入链接」单独补进来。</div></div>
     </div>`;
     bind();
   }
@@ -88,6 +90,60 @@ export async function renderSources(el, ctx) {
       </section>`;
     }
     return '';
+  }
+
+  function lastRunPanel(lastRun) {
+    if (!lastRun) return '';
+    const ok = lastRun.pages_ok || 0;
+    const bad = lastRun.pages_failed || 0;
+    const status = lastRun.status === 'running' ? '进行中' : (bad ? '部分失败' : '已完成');
+    const errors = (lastRun.errors || []).filter(Boolean).slice(-3);
+    return `<section class="card pad-sm">
+      <div class="flex-between"><div class="small strong">${icon('clock')} 最近一次采集 · ${esc(status)}</div>
+        <span class="tiny muted">${lastRun.finished_at ? esc(fmtDateTime(lastRun.finished_at)) : ''}</span></div>
+      <div class="tiny muted mt-6">成功 ${ok} 页 · 失败 ${bad} 页${lastRun.started_at ? ` · 开始于 ${esc(fmtDateTime(lastRun.started_at))}` : ''}</div>
+      ${errors.length ? `<div class="crawl-error mt-6">${errors.map(esc).join('<br>')}</div>` : ''}
+      ${bad ? '<div class="tiny muted mt-6">失败的站点会保留官网链接，可点「导入链接」单独补充具体文件。</div>' : ''}
+    </section>`;
+  }
+
+  function openImport() {
+    if (!data || !data.can_crawl) { toast('当前部署仅管理员可以导入官网文件', 'warn'); return; }
+    openModal({
+      title: '导入官网文件',
+      body: `<div class="stack">
+        <div class="notice notice-info">${icon('info')}<div>粘贴学校官网（ecnu.edu.cn）上的公开页面或 PDF 链接。适合爬虫没抓到、需要脚本渲染或想单独补充的通知、规章与培养方案。</div></div>
+        <div class="field"><label for="importUrl">文件链接</label>
+          <input class="input" id="importUrl" placeholder="https://www.ecnu.edu.cn/xxxx/xxxx.pdf" maxlength="500" autocomplete="off">
+          <span class="hint">只接受 http(s) 且域名在 ecnu.edu.cn 白名单内；抓取一次后加入检索库，已存在且内容未变化时会提示。</span>
+        </div>
+        <div class="tiny muted" id="importStatus"></div>
+      </div>`,
+      footer: `<button class="btn btn-ghost" type="button" data-close>取消</button>
+        <button class="btn btn-primary" type="button" id="importSubmit">${icon('download')}导入</button>`,
+      onMount: (root, close) => {
+        const input = root.querySelector('#importUrl');
+        const button = root.querySelector('#importSubmit');
+        const statusEl = root.querySelector('#importStatus');
+        const submit = async () => {
+          const url = input.value.trim();
+          if (!/^https?:\/\/[^\s]+$/i.test(url)) { toast('请输入完整的 http(s) 链接', 'warn'); input.focus(); return; }
+          button.disabled = true;
+          statusEl.textContent = '正在抓取并解析…';
+          try {
+            const result = await api.post('/api/sources/import', { url });
+            toast(result.message || '已导入', 'success', 4200);
+            close();
+            await load();
+          } catch (error) {
+            statusEl.textContent = error.message || '导入失败';
+            toast(error.message || '导入失败', 'error', 5200);
+          } finally { button.disabled = false; }
+        };
+        button.addEventListener('click', submit);
+        input.addEventListener('keydown', (event) => { if (event.key === 'Enter') { event.preventDefault(); submit(); } });
+      }
+    });
   }
 
   function bind() {
@@ -120,6 +176,7 @@ export async function renderSources(el, ctx) {
     el.querySelectorAll('[data-crawl]').forEach((button) => {
       button.addEventListener('click', () => startCrawl([Number(button.getAttribute('data-crawl'))]));
     });
+    el.querySelector('#importDoc')?.addEventListener('click', openImport);
     el.querySelector('#crawlSelected')?.addEventListener('click', () => {
       if (!selected.size) { toast('请先选择要采集的站点', 'warn'); return; }
       startCrawl(Array.from(selected).map(Number));

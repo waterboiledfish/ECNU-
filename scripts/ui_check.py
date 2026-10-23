@@ -5,13 +5,14 @@ python scripts/ui_check.py
 """
 from __future__ import annotations
 
+import os
 import sys
 import time
 from pathlib import Path
 
 from playwright.sync_api import sync_playwright
 
-BASE = "http://127.0.0.1:8765"
+BASE = os.environ.get("ECNU_UI_BASE", "http://127.0.0.1:8765")
 OUT = Path(__file__).resolve().parent.parent / ".ui-shots"
 ROUTES = [
     ("ask", "#/ask"),

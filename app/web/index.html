@@ -66,6 +66,9 @@
   <div id="toasts" class="toasts" role="status" aria-live="polite"></div>
   <div id="modalRoot"></div>
 
+  <!-- 本地 MathJax（离线可用）：配置必须在 tex-svg.js 之前，且不能内联（CSP script-src 'self'）。 -->
+  <script src="/static/js/mathjax-config.js"></script>
+  <script defer src="/static/vendor/mathjax/tex-svg.js"></script>
   <script type="module" src="/static/js/app.js"></script>
 </body>
 </html>

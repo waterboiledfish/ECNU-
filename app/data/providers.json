@@ -1,0 +1,44 @@
+[
+  {
+    "id": "openai",
+    "name": "OpenAI",
+    "base_url": "https://api.openai.com/v1",
+    "models": ["gpt-4.1-mini", "gpt-4.1", "gpt-5-mini"],
+    "note": "需要可访问 OpenAI 的网络与账户额度"
+  },
+  {
+    "id": "deepseek",
+    "name": "DeepSeek",
+    "base_url": "https://api.deepseek.com/v1",
+    "models": ["deepseek-chat", "deepseek-reasoner"],
+    "note": "国内可直连，价格较低，适合日常问答"
+  },
+  {
+    "id": "moonshot",
+    "name": "Moonshot（Kimi）",
+    "base_url": "https://api.moonshot.cn/v1",
+    "models": ["moonshot-v1-8k", "moonshot-v1-32k"],
+    "note": "长文本能力较好"
+  },
+  {
+    "id": "zhipu",
+    "name": "智谱 AI",
+    "base_url": "https://open.bigmodel.cn/api/paas/v4",
+    "models": ["glm-4-plus", "glm-4-air", "glm-4-flash"],
+    "note": "GLM 系列模型"
+  },
+  {
+    "id": "dashscope",
+    "name": "通义千问（DashScope）",
+    "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    "models": ["qwen-plus", "qwen-max", "qwen-turbo"],
+    "note": "阿里云兼容模式"
+  },
+  {
+    "id": "siliconflow",
+    "name": "硅基流动 SiliconFlow",
+    "base_url": "https://api.siliconflow.cn/v1",
+    "models": ["deepseek-ai/DeepSeek-V3", "Qwen/Qwen2.5-72B-Instruct"],
+    "note": "聚合多种开源模型"
+  }
+]

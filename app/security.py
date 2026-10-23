@@ -27,6 +27,7 @@ PUBLIC_USER_FIELDS = (
     "avatar",
     "bio",
     "major",
+    "department",
     "grade",
     "role",
     "created_at",

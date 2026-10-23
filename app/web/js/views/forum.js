@@ -542,6 +542,7 @@ export async function renderForumUser(el, ctx) {
           <div class="user-name">${esc(user.nickname)}${user.role === 'admin' ? ' <span class="tag tag-amber">管理员</span>' : ''}</div>
           <div class="user-bio">${esc(user.bio || '这位同学还没有写简介。')}</div>
           <div class="flex wrap mt-10 tiny muted">
+            ${user.department ? `<span class="tag">${esc(user.department)}</span>` : ''}
             ${user.major ? `<span class="tag">${esc(user.major)}</span>` : ''}
             ${user.grade ? `<span class="tag">${esc(user.grade)}</span>` : ''}
             ${(user.directions || []).map((direction) => `<span class="tag tag-teal">${esc(direction)}</span>`).join('')}

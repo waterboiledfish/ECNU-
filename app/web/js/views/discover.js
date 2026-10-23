@@ -1,7 +1,7 @@
 import { api } from '../api.js';
 import { store, saveLLM } from '../store.js';
 import { icon, esc, toast, openModal, loadingBlock, emptyState, timeAgo, safeHttpUrl } from '../ui.js';
-import { renderMarkdown } from '../markdown.js';
+import { renderMarkdown, typeset } from '../markdown.js';
 
 function openKeyPrompt(onSaved) {
   const providers = (store.meta && store.meta.providers) || [];
@@ -147,6 +147,7 @@ export async function renderNews(el, ctx) {
       <p class="tiny muted mt-10">摘要由模型生成，可能遗漏或误读，请以原文为准。</p>
     </section>`;
     slot.querySelector('#closeDigest').addEventListener('click', () => { digest = null; renderDigest(); });
+    typeset(slot);
   }
 
   async function makeDigest() {

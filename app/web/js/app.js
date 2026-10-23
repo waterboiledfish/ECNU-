@@ -119,7 +119,7 @@ function renderShell() {
   const roleTag = user.is_admin ? '<span class="tag tag-amber" style="margin-left:auto">管理员</span>' : '';
   document.getElementById('sidebarUser').innerHTML = `
     ${avatar(user, 'sm')}
-    <span class="meta"><strong>${escapeText(user.nickname)}</strong><small>${escapeText(user.major || '华东师范大学')}</small></span>
+    <span class="meta"><strong>${escapeText(user.nickname)}</strong><small>${escapeText([user.department, user.major].filter(Boolean).join(' · ') || '华东师范大学')}</small></span>
     ${roleTag}`;
   document.getElementById('userChip').innerHTML = `
     ${avatar(user, 'sm')}

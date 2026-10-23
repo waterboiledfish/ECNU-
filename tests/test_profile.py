@@ -36,6 +36,32 @@ def test_update_profile(auth):
     assert me["settings"]["news_categories"] == ["tech", "finance"]
 
 
+def test_update_profile_department_and_major(auth):
+    client, headers = auth["client"], auth["headers"]
+    response = client.patch(
+        "/api/profile",
+        json={"department": "计算机科学与技术学院", "major": "计算机科学与技术"},
+        headers=headers,
+    )
+    assert response.status_code == 200
+    user = response.json()["user"]
+    assert user["department"] == "计算机科学与技术学院"
+    assert user["major"] == "计算机科学与技术"
+    me = client.get("/api/auth/me").json()["user"]
+    assert me["department"] == "计算机科学与技术学院"
+    departments = client.get("/api/meta").json()["academics"]["departments"]
+    hit = next(item for item in departments if item["name"] == "计算机科学与技术学院")
+    assert "计算机科学与技术" in hit["majors"]
+
+
+def test_profile_department_can_be_cleared(auth):
+    client, headers = auth["client"], auth["headers"]
+    client.patch("/api/profile", json={"department": "教育学部"}, headers=headers)
+    response = client.patch("/api/profile", json={"department": ""}, headers=headers)
+    assert response.status_code == 200
+    assert response.json()["user"]["department"] == ""
+
+
 def test_invalid_nickname_and_duplicate(auth, second_user):
     response = auth["client"].patch("/api/profile", json={"nickname": "x"}, headers=auth["headers"])
     assert response.status_code == 400

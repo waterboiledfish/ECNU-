@@ -742,3 +742,10 @@ h1, h2, h3, h4 { line-height: 1.3; font-weight: 700; letter-spacing: -.01em; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; scroll-behavior: auto !important; }
 }
+
+/* 公式：嵌入 SVG 输出，窄屏横向滚动，公式块单独成行居中。 */
+.math { max-width: 100%; }
+.math-block { display: block; overflow-x: auto; overflow-y: hidden; margin: 8px 0; }
+mjx-container[jax="SVG"] { max-width: 100%; }
+mjx-container[jax="SVG"] > svg { max-width: 100%; height: auto; }
+.md .math-block mjx-container[jax="SVG"], .msg-bubble .math-block mjx-container[jax="SVG"], .digest-box .math-block mjx-container[jax="SVG"] { display: block; text-align: center; }

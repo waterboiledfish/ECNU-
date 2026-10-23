@@ -7,7 +7,7 @@ from pathlib import Path
 from fastapi import APIRouter
 
 from ..config import settings
-from ..options import AVATAR_PRESETS, GRADES, REPORT_REASONS
+from ..options import AVATAR_PRESETS, GRADES, REPORT_REASONS, academics
 from ..services import news, notifier, study
 from ..services.forum import TAGS
 from .auth import auth_meta
@@ -33,6 +33,7 @@ def meta():
         "providers": _providers(),
         "defaults": {"base_url": settings.llm_base_url, "model": settings.llm_model},
         "grades": GRADES,
+        "academics": academics(),
         "avatars": AVATAR_PRESETS,
         "report_reasons": REPORT_REASONS,
         "forum_tags": TAGS,

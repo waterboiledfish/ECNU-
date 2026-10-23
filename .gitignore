@@ -2,7 +2,8 @@
 .env
 .env.*
 !.env.example
-data/
+# 只忽略根目录的运行时数据；app/data/ 是随仓库发布的种子数据
+/data/
 *.db
 *.db-wal
 *.db-shm

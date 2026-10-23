@@ -3,7 +3,7 @@ import { store } from '../store.js';
 import {
   icon, esc, toast, openModal, confirmDialog, loadingBlock, emptyState
 } from '../ui.js';
-import { renderMarkdown } from '../markdown.js';
+import { renderMarkdown, typeset } from '../markdown.js';
 
 const CATEGORY = {
   vocab: { label: '词汇', emoji: '📚', unit: '个', target: 20 },
@@ -250,6 +250,7 @@ export async function renderPlans(el, ctx) {
       const result = await api.post(`/api/plans/${plan.id}/coach`, {});
       modal.bodyEl.innerHTML = `<div class="md">${renderMarkdown(result.advice)}</div>
         <p class="tiny muted mt-16">${result.mode === 'ai' ? '由你配置的模型生成，建议仅供参考。' : '本地建议模板（未配置模型 Key 时使用）。'}</p>`;
+      typeset(modal.bodyEl);
     } catch (error) {
       modal.bodyEl.innerHTML = `<div class="notice notice-danger">${icon('alert')}<div>${esc(error.message)}</div></div>`;
     }

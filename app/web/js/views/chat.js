@@ -3,7 +3,7 @@ import { store, saveLLM, clearLLMKey } from '../store.js';
 import {
   icon, esc, avatar, toast, openModal, safeHttpUrl
 } from '../ui.js';
-import { renderMarkdown } from '../markdown.js';
+import { renderMarkdown, typeset } from '../markdown.js';
 
 const PROMPTS = {
   official: [
@@ -208,7 +208,7 @@ export async function renderChat(el, ctx) {
         <div class="msg-avatar">${avatar(store.user, 'xs')}</div>
         <div class="msg-body">
           <div class="msg-meta">你 · 刚刚</div>
-          <div class="msg-bubble">${esc(message.content).replace(/\n/g, '<br>')}</div>
+          <div class="msg-bubble tex2jax_ignore">${esc(message.content).replace(/\n/g, '<br>')}</div>
         </div>
       </div>`;
     }
@@ -260,6 +260,7 @@ export async function renderChat(el, ctx) {
         } catch (e) { toast('复制失败', 'error'); }
       });
     });
+    typeset(logEl);
     logEl.scrollTop = logEl.scrollHeight;
   }
 

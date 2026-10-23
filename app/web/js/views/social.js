@@ -92,7 +92,7 @@ export async function renderMessages(el, ctx) {
     panel.innerHTML = `<div class="thread-head">
         ${avatar(peer, 'sm')}
         <div class="grow"><a class="strong" href="#/forum/user/${peer.id}" style="color:var(--text)">${esc(peer.nickname)}</a>
-          <div class="tiny muted">${esc(peer.major || '华东师范大学')}${peer.grade ? ` · ${esc(peer.grade)}` : ''}</div></div>
+          <div class="tiny muted">${esc([peer.department, peer.major].filter(Boolean).join(' · ') || '华东师范大学')}${peer.grade ? ` · ${esc(peer.grade)}` : ''}</div></div>
         <span class="tiny muted">${state.messages.length} 条消息</span>
       </div>
       <div class="thread-log" id="threadLog">
@@ -229,6 +229,13 @@ export async function renderProfile(el, ctx) {
   const user = profileData.user;
   store.user = { ...store.user, ...user };
   const meta = store.meta || {};
+  const academics = (meta.academics && meta.academics.departments) || [];
+  const majorOptions = (departmentName) => {
+    const hit = academics.find((item) => item.name === departmentName);
+    const list = hit ? hit.majors || [] : academics.flatMap((item) => item.majors || []);
+    return Array.from(new Set(list));
+  };
+  const orgLine = [user.department, user.major].filter(Boolean).join(' · ') || '华东师范大学';
   let avatarValue = user.avatar;
   let themeValue = user.settings?.theme || 'system';
 
@@ -239,7 +246,7 @@ export async function renderProfile(el, ctx) {
       <aside class="card profile-card">
         <div id="profileAvatar">${avatar({ ...user, avatar: avatarValue }, 'xl', 'avatar-ring')}</div>
         <h2>${esc(user.nickname)}</h2>
-        <div class="p-meta">${esc(user.major || '华东师范大学')}${user.grade ? ` · ${esc(user.grade)}` : ''}${user.role === 'admin' ? ' · 管理员' : ''}</div>
+        <div class="p-meta">${esc(orgLine)}${user.grade ? ` · ${esc(user.grade)}` : ''}${user.role === 'admin' ? ' · 管理员' : ''}</div>
         <p class="p-bio">${esc(user.bio || '还没有写简介。')}</p>
         <div class="user-stats" style="justify-content:center">
           <div><strong>${stats.posts}</strong><span>帖子</span></div>
@@ -258,7 +265,15 @@ export async function renderProfile(el, ctx) {
           <div class="section-title">${icon('user')} 基本资料</div>
           <div class="form-grid">
             <div class="field"><label for="profNickname">昵称</label><input class="input" id="profNickname" value="${esc(user.nickname)}" maxlength="16"></div>
-            <div class="field"><label for="profMajor">专业 / 院系</label><input class="input" id="profMajor" value="${esc(user.major || '')}" maxlength="40" placeholder="例如：计算机科学与技术"></div>
+            <div class="field"><label for="profDepartment">院系</label><select class="select" id="profDepartment">
+              <option value="">未填写</option>
+              ${academics.map((item) => `<option value="${esc(item.name)}" ${user.department === item.name ? 'selected' : ''}>${esc(item.name)}${item.category ? ` · ${esc(item.category)}` : ''}</option>`).join('')}
+            </select></div>
+            <div class="field"><label for="profMajor">专业</label>
+              <input class="input" id="profMajor" list="profMajorOptions" value="${esc(user.major || '')}" maxlength="40" placeholder="例如：计算机科学与技术">
+              <datalist id="profMajorOptions">${majorOptions(user.department || '').map((major) => `<option value="${esc(major)}"></option>`).join('')}</datalist>
+              <span class="hint">可从列表选择，也可以手动填写其他专业。</span>
+            </div>
             <div class="field"><label for="profGrade">年级</label><select class="select" id="profGrade">
               <option value="">未填写</option>
               ${(meta.grades || ['大一', '大二', '大三', '大四', '研一', '研二', '研三', '博士', '教师', '其他']).map((grade) => `<option value="${esc(grade)}" ${user.grade === grade ? 'selected' : ''}>${esc(grade)}</option>`).join('')}
@@ -388,6 +403,12 @@ export async function renderProfile(el, ctx) {
     toast('已清除 API Key', 'success');
   });
 
+  el.querySelector('#profDepartment')?.addEventListener('change', (event) => {
+    const list = el.querySelector('#profMajorOptions');
+    if (!list) return;
+    list.innerHTML = majorOptions(event.target.value).map((major) => `<option value="${esc(major)}"></option>`).join('');
+  });
+
   el.querySelector('#saveProfile').addEventListener('click', async () => {
     const nickname = el.querySelector('#profNickname').value.trim();
     if (nickname.length < 2) { toast('昵称至少 2 个字', 'warn'); return; }
@@ -400,6 +421,7 @@ export async function renderProfile(el, ctx) {
         nickname,
         bio: el.querySelector('#profBio').value.trim(),
         major: el.querySelector('#profMajor').value.trim(),
+        department: el.querySelector('#profDepartment')?.value.trim() || '',
         grade: el.querySelector('#profGrade').value,
         directions,
         courses,

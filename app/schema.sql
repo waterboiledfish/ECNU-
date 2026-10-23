@@ -15,6 +15,7 @@ CREATE TABLE IF NOT EXISTS users (
     avatar        TEXT NOT NULL DEFAULT 'preset:ocean',
     bio           TEXT NOT NULL DEFAULT '',
     major         TEXT NOT NULL DEFAULT '',
+    department    TEXT NOT NULL DEFAULT '',
     grade         TEXT NOT NULL DEFAULT '',
     directions    TEXT NOT NULL DEFAULT '[]',
     courses       TEXT NOT NULL DEFAULT '[]',

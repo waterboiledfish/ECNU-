@@ -1,6 +1,10 @@
 """前端可用的固定选项。"""
 from __future__ import annotations
 
+import json
+from functools import lru_cache
+from pathlib import Path
+
 GRADES = ["大一", "大二", "大三", "大四", "研一", "研二", "研三", "博士", "教师", "其他"]
 
 AVATAR_PRESETS = [
@@ -17,6 +21,18 @@ AVATAR_PRESETS = [
 REPORT_REASONS = ["色情低俗", "暴力血腥", "违法违规", "诈骗广告", "人身攻击", "隐私泄露", "其他"]
 
 RESERVED_NICKNAMES = {"管理员", "官方", "客服", "系统", "ECNU小助手", "小助手", "admin", "administrator"}
+
+_ACADEMICS_PATH = Path(__file__).with_name("data") / "academics.json"
+
+
+@lru_cache(maxsize=1)
+def academics() -> dict:
+    """院系 / 专业选项；读取失败时返回空目录，前端仍可手动填写。"""
+    try:
+        return json.loads(_ACADEMICS_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {"departments": [], "note": ""}
+
 
 DEFAULT_SETTINGS = {
     "theme": "system",

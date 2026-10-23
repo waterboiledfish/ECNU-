@@ -2,15 +2,16 @@
 from __future__ import annotations
 
 import json
+from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from ..config import settings
-from ..db import db
+from ..db import bump_index_version, db
 from ..security import client_ip, enforce_rate, get_current_user
-from ..services import index
-from ..services.crawler import crawl_manager
+from ..services import extract, index
+from ..services.crawler import CrawlManager, crawl_manager
 from ..timeutil import iso, now_utc
 
 router = APIRouter(prefix="/api/sources", tags=["sources"])
@@ -18,6 +19,10 @@ router = APIRouter(prefix="/api/sources", tags=["sources"])
 
 class CrawlIn(BaseModel):
     site_ids: list[int] = Field(default_factory=list, max_length=60)
+
+
+class ImportIn(BaseModel):
+    url: str = Field(min_length=8, max_length=500)
 
 
 def _crawl_allowed(user: dict) -> bool:
@@ -29,7 +34,7 @@ def list_sources(user: dict = Depends(get_current_user)):
     with db() as conn:
         rows = conn.execute(
             "SELECT s.*, (SELECT COUNT(*) FROM documents d WHERE d.site_id = s.id) AS doc_count "
-            "FROM sites s ORDER BY s.category, s.id"
+            "FROM sites s WHERE s.enabled = 1 ORDER BY s.category, s.id"
         ).fetchall()
         sites = [
             {
@@ -48,14 +53,102 @@ def list_sources(user: dict = Depends(get_current_user)):
         for site in sites:
             categories.setdefault(site["category"], []).append(site)
         doc_total = conn.execute("SELECT COUNT(*) AS n FROM documents").fetchone()["n"]
+        last = conn.execute("SELECT * FROM crawl_runs ORDER BY id DESC LIMIT 1").fetchone()
+        last_run = None
+        if last:
+            try:
+                detail = json.loads(last["detail"] or "{}")
+            except json.JSONDecodeError:
+                detail = {}
+            last_run = {
+                "status": last["status"],
+                "started_at": last["started_at"],
+                "finished_at": last["finished_at"],
+                "pages_ok": last["pages_ok"],
+                "pages_failed": last["pages_failed"],
+                "errors": detail.get("errors", [])[-8:],
+            }
     return {
         "sites": sites,
         "categories": [{"name": name, "sites": items} for name, items in categories.items()],
         "documents": int(doc_total),
         "index": index.stats(),
         "crawl": crawl_manager.status(),
+        "last_run": last_run,
         "can_crawl": _crawl_allowed(user),
         "portal_url": settings.portal_url,
+    }
+
+
+def _site_for_host(conn, host: str):
+    rows = conn.execute("SELECT * FROM sites WHERE enabled = 1 ORDER BY id").fetchall()
+    for row in rows:
+        base = (urlparse(row["url"]).hostname or "").lower()
+        if base and (host == base or host.endswith("." + base)):
+            return row
+    return None
+
+
+@router.post("/import", status_code=201)
+def import_document(payload: ImportIn, request: Request, user: dict = Depends(get_current_user)):
+    """手动导入一个官网公开文件链接，适合爬虫难以覆盖的通知/规章/PDF。"""
+    if not _crawl_allowed(user):
+        raise HTTPException(status_code=403, detail="当前部署仅管理员可以导入官网文件")
+    enforce_rate(request, "import-doc", 30, 3600)
+    url = payload.url.strip()
+    parsed = urlparse(url)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise HTTPException(status_code=400, detail="请输入完整的 http(s) 链接")
+    if not extract.host_allowed(url, settings.crawl_allowed_suffixes):
+        raise HTTPException(status_code=400, detail="链接不在学校官网白名单（ecnu.edu.cn）内")
+    try:
+        result = extract.fetch(url)
+        if not extract.host_allowed(result["url"], settings.crawl_allowed_suffixes):
+            raise HTTPException(status_code=400, detail="链接跳转到了非学校官网，已拒绝")
+        content = extract.extract(
+            result["url"], result["content_type"], result["data"], result.get("charset", "utf-8")
+        )
+    except extract.FetchError as exc:
+        raise HTTPException(status_code=400, detail=f"读取失败：{exc}") from None
+    if len(content["text"]) < 60:
+        raise HTTPException(
+            status_code=400,
+            detail="没有提取到足够的正文（扫描版 PDF 需先 OCR，或该页面依赖脚本渲染）",
+        )
+    host = (urlparse(result["url"]).hostname or "").lower()
+    with db() as conn:
+        site = _site_for_host(conn, host)
+        if site is None:
+            cursor = conn.execute(
+                "INSERT INTO sites (key, name, url, category, description, enabled) "
+                "VALUES (?, ?, ?, '手动导入', '通过链接手动导入的学校官网文件', 1)",
+                (host, host, f"https://{host}/"),
+            )
+            site_id = int(cursor.lastrowid)
+        else:
+            site_id = int(site["id"])
+        changed = CrawlManager._save_document(conn, site_id, result["url"], content)
+        conn.execute(
+            "UPDATE sites SET last_crawled_at = ?, doc_count = "
+            "(SELECT COUNT(*) FROM documents WHERE site_id = ?) WHERE id = ?",
+            (iso(now_utc()), site_id, site_id),
+        )
+        conn.execute(
+            "INSERT INTO audit_log (actor_id, action, target, detail, created_at) "
+            "VALUES (?, 'import-document', ?, ?, ?)",
+            (user["id"], result["url"][:300], json.dumps({"ip": client_ip(request)}), iso(now_utc())),
+        )
+        doc = conn.execute(
+            "SELECT id, title, url, published_at, char_count, content_type "
+            "FROM documents WHERE url = ?",
+            (result["url"],),
+        ).fetchone()
+    bump_index_version()
+    return {
+        "ok": True,
+        "changed": changed,
+        "document": dict(doc) if doc else None,
+        "message": "已导入并加入检索索引" if changed else "文件已存在且内容未变化",
     }
 
 

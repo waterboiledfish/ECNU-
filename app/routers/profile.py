@@ -36,6 +36,7 @@ class ProfileUpdate(BaseModel):
     nickname: str | None = Field(default=None, max_length=16)
     bio: str | None = Field(default=None, max_length=200)
     major: str | None = Field(default=None, max_length=40)
+    department: str | None = Field(default=None, max_length=40)
     grade: str | None = None
     directions: list[str] | None = Field(default=None, max_length=12)
     courses: list[str] | None = Field(default=None, max_length=24)
@@ -85,6 +86,7 @@ def _public_self(user: dict) -> dict:
         "avatar_url": avatar_url(user["avatar"]),
         "bio": user["bio"],
         "major": user["major"],
+        "department": user.get("department", ""),
         "grade": user["grade"],
         "directions": user.get("directions", []),
         "courses": user.get("courses", []),
@@ -128,6 +130,9 @@ def update_profile(payload: ProfileUpdate, user: dict = Depends(get_current_user
         if "major" in fields and fields["major"] is not None:
             updates.append("major = ?")
             values.append(fields["major"].strip())
+        if "department" in fields and fields["department"] is not None:
+            updates.append("department = ?")
+            values.append(fields["department"].strip())
         if "grade" in fields and fields["grade"] is not None:
             if fields["grade"] not in GRADES and fields["grade"] != "":
                 raise HTTPException(status_code=400, detail="年级选项无效")
