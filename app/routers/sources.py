@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 from ..config import settings
 from ..db import bump_index_version, db
 from ..security import client_ip, enforce_rate, get_current_user
-from ..services import extract, index
+from ..services import extract, index, recency
 from ..services.crawler import CrawlManager, crawl_manager
 from ..timeutil import iso, now_utc
 
@@ -23,6 +23,10 @@ class CrawlIn(BaseModel):
 
 class ImportIn(BaseModel):
     url: str = Field(min_length=8, max_length=500)
+
+
+class SettingsIn(BaseModel):
+    max_age_days: int = Field(ge=0, le=recency.MAX_DAYS)
 
 
 def _crawl_allowed(user: dict) -> bool:
@@ -66,6 +70,7 @@ def list_sources(user: dict = Depends(get_current_user)):
                 "finished_at": last["finished_at"],
                 "pages_ok": last["pages_ok"],
                 "pages_failed": last["pages_failed"],
+                "skipped_old": int(detail.get("skipped_old", 0) or 0),
                 "errors": detail.get("errors", [])[-8:],
             }
     return {
@@ -76,8 +81,21 @@ def list_sources(user: dict = Depends(get_current_user)):
         "crawl": crawl_manager.status(),
         "last_run": last_run,
         "can_crawl": _crawl_allowed(user),
+        "max_age_days": recency.max_age_days(),
+        "age_choices": list(recency.CHOICES),
         "portal_url": settings.portal_url,
     }
+
+
+@router.patch("/settings")
+def update_settings(payload: SettingsIn, request: Request, user: dict = Depends(get_current_user)):
+    """调整「只收录最近 N 天文件」的窗口，0 表示不限。"""
+    if not _crawl_allowed(user):
+        raise HTTPException(status_code=403, detail="当前部署仅管理员可以调整收录范围")
+    enforce_rate(request, "source-settings", 20, 600)
+    value = recency.set_max_age_days(payload.max_age_days)
+    bump_index_version()
+    return {"ok": True, "max_age_days": value, "index": index.stats()}
 
 
 def _site_for_host(conn, host: str):
@@ -114,6 +132,11 @@ def import_document(payload: ImportIn, request: Request, user: dict = Depends(ge
         raise HTTPException(
             status_code=400,
             detail="没有提取到足够的正文（扫描版 PDF 需先 OCR，或该页面依赖脚本渲染）",
+        )
+    if recency.is_too_old(content.get("published_at")):
+        raise HTTPException(
+            status_code=400,
+            detail=f"该文件的发布日期超出收录窗口（最近 {recency.max_age_days()} 天），如需收录请先在页面上放宽收录范围",
         )
     host = (urlparse(result["url"]).hostname or "").lower()
     with db() as conn:

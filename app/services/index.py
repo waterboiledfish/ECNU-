@@ -14,6 +14,7 @@ from collections import defaultdict
 from typing import Any
 
 from ..db import db, get_meta
+from . import recency
 from .tokenize import query_terms, tokenize
 
 _LOCK = threading.Lock()
@@ -38,6 +39,7 @@ def build_index(force: bool = False) -> dict[str, Any]:
     with _LOCK:
         if not force and _CACHE["version"] == version and _CACHE["built_at"]:
             return _CACHE
+        cutoff = recency.cutoff_day()
         with db() as conn:
             rows = conn.execute(
                 """
@@ -48,6 +50,9 @@ def build_index(force: bool = False) -> dict[str, Any]:
                 JOIN sites s ON s.id = d.site_id
                 """
             ).fetchall()
+        if cutoff:
+            # 超出收录窗口的旧文件不参与检索；没有发布日期的不受影响
+            rows = [row for row in rows if not recency.is_too_old(row["published_at"])]
         postings: dict[str, list[tuple[int, int]]] = defaultdict(list)
         lengths: dict[int, int] = {}
         docs: dict[int, dict[str, Any]] = {}

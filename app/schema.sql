@@ -123,6 +123,7 @@ CREATE TABLE IF NOT EXISTS plans (
     user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     title         TEXT NOT NULL,
     category      TEXT NOT NULL DEFAULT 'custom',
+    category_label TEXT NOT NULL DEFAULT '',
     cadence       TEXT NOT NULL DEFAULT 'daily',
     weekdays      TEXT NOT NULL DEFAULT '[]',
     target_count  INTEGER NOT NULL DEFAULT 1,
@@ -133,6 +134,29 @@ CREATE TABLE IF NOT EXISTS plans (
     created_at    TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_plans_user ON plans(user_id, active);
+
+-- ---------------- AI 对话历史 ----------------
+CREATE TABLE IF NOT EXISTS chat_threads (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    mode       TEXT NOT NULL DEFAULT 'official',
+    title      TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_chat_threads_user ON chat_threads(user_id, mode, updated_at);
+
+CREATE TABLE IF NOT EXISTS chat_messages (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    thread_id    INTEGER NOT NULL REFERENCES chat_threads(id) ON DELETE CASCADE,
+    role         TEXT NOT NULL,
+    content      TEXT NOT NULL DEFAULT '',
+    sources      TEXT NOT NULL DEFAULT '[]',
+    insufficient INTEGER NOT NULL DEFAULT 0,
+    error        TEXT NOT NULL DEFAULT '',
+    created_at   TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_chat_messages_thread ON chat_messages(thread_id, id);
 
 CREATE TABLE IF NOT EXISTS plan_progress (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,

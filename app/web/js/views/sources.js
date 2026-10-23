@@ -55,6 +55,7 @@ export async function renderSources(el, ctx) {
         <div class="stat"><div class="label">采集状态</div><div class="value" style="font-size:19px">${crawl.running ? '进行中' : '空闲'}</div><div class="hint">${crawl.message || '按需采集，遵守 robots.txt'}</div></div>
       </div>
       ${crawlPanel(crawl)}
+      ${agePanel(data)}
       ${lastRunPanel(data.last_run)}
       <div class="card pad-sm">
         <div class="toolbar mb-12">
@@ -92,16 +93,36 @@ export async function renderSources(el, ctx) {
     return '';
   }
 
+  const AGE_LABELS = { 0: '不限（全部收录）', 365: '最近 1 年', 730: '最近 2 年', 1095: '最近 3 年', 1825: '最近 5 年' };
+
+  function agePanel(payload) {
+    const current = Number(payload.max_age_days) || 0;
+    const choices = payload.age_choices || [0, 365, 730, 1095, 1825];
+    const options = (choices.includes(current) ? choices : [...choices, current].sort((a, b) => a - b))
+      .map((days) => `<option value="${days}" ${days === current ? 'selected' : ''}>${AGE_LABELS[days] || `最近 ${Math.round(days / 365)} 年`}</option>`)
+      .join('');
+    return `<section class="card pad-sm">
+      <div class="flex-between wrap">
+        <div class="grow">
+          <div class="small strong">${icon('clock')} 收录范围</div>
+          <div class="tiny muted mt-6">只把这段时间内发布的官网文件加入检索库（页面上没写日期的照常收录）。改完会自动重建索引。</div>
+        </div>
+        <select class="select" id="ageSelect" style="width:auto;min-width:150px" ${payload.can_crawl ? '' : 'disabled'}>${options}</select>
+      </div>
+    </section>`;
+  }
+
   function lastRunPanel(lastRun) {
     if (!lastRun) return '';
     const ok = lastRun.pages_ok || 0;
     const bad = lastRun.pages_failed || 0;
+    const old = lastRun.skipped_old || 0;
     const status = lastRun.status === 'running' ? '进行中' : (bad ? '部分失败' : '已完成');
     const errors = (lastRun.errors || []).filter(Boolean).slice(-3);
     return `<section class="card pad-sm">
       <div class="flex-between"><div class="small strong">${icon('clock')} 最近一次采集 · ${esc(status)}</div>
         <span class="tiny muted">${lastRun.finished_at ? esc(fmtDateTime(lastRun.finished_at)) : ''}</span></div>
-      <div class="tiny muted mt-6">成功 ${ok} 页 · 失败 ${bad} 页${lastRun.started_at ? ` · 开始于 ${esc(fmtDateTime(lastRun.started_at))}` : ''}</div>
+      <div class="tiny muted mt-6">成功 ${ok} 页 · 失败 ${bad} 页${old ? ` · 跳过 ${old} 篇超出收录范围` : ''}${lastRun.started_at ? ` · 开始于 ${esc(fmtDateTime(lastRun.started_at))}` : ''}</div>
       ${errors.length ? `<div class="crawl-error mt-6">${errors.map(esc).join('<br>')}</div>` : ''}
       ${bad ? '<div class="tiny muted mt-6">失败的站点会保留官网链接，可点「导入链接」单独补充具体文件。</div>' : ''}
     </section>`;
@@ -115,7 +136,7 @@ export async function renderSources(el, ctx) {
         <div class="notice notice-info">${icon('info')}<div>粘贴学校官网（ecnu.edu.cn）上的公开页面或 PDF 链接。适合爬虫没抓到、需要脚本渲染或想单独补充的通知、规章与培养方案。</div></div>
         <div class="field"><label for="importUrl">文件链接</label>
           <input class="input" id="importUrl" placeholder="https://www.ecnu.edu.cn/xxxx/xxxx.pdf" maxlength="500" autocomplete="off">
-          <span class="hint">只接受 http(s) 且域名在 ecnu.edu.cn 白名单内；抓取一次后加入检索库，已存在且内容未变化时会提示。</span>
+          <span class="hint">只接受 http(s) 且域名在 ecnu.edu.cn 白名单内；抓取一次后加入检索库，已存在且内容未变化时会提示。发布日期超出下方「收录范围」的文件会被拒绝。</span>
         </div>
         <div class="tiny muted" id="importStatus"></div>
       </div>`,
@@ -177,6 +198,16 @@ export async function renderSources(el, ctx) {
       button.addEventListener('click', () => startCrawl([Number(button.getAttribute('data-crawl'))]));
     });
     el.querySelector('#importDoc')?.addEventListener('click', openImport);
+    el.querySelector('#ageSelect')?.addEventListener('change', async (event) => {
+      const days = Number(event.target.value) || 0;
+      try {
+        await api.patch('/api/sources/settings', { max_age_days: days });
+        toast(days ? `已设为只收录最近 ${Math.round(days / 365)} 年的文件` : '已设为不限收录时间', 'success');
+        await load();
+      } catch (error) {
+        toast(error.message, 'error');
+      }
+    });
     el.querySelector('#crawlSelected')?.addEventListener('click', () => {
       if (!selected.size) { toast('请先选择要采集的站点', 'warn'); return; }
       startCrawl(Array.from(selected).map(Number));

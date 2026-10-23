@@ -102,6 +102,7 @@ def serialize_plan(conn, row) -> dict:
         "id": row["id"],
         "title": row["title"],
         "category": row["category"],
+        "category_label": row["category_label"],
         "cadence": row["cadence"],
         "weekdays": json.loads(row["weekdays"] or "[]"),
         "target_count": row["target_count"],
@@ -131,9 +132,11 @@ def _validate_weekdays(values: list[int]) -> list[int]:
 class PlanCreate(BaseModel):
     title: str = Field(min_length=1, max_length=60)
     category: Literal["vocab", "reading", "exercise", "skill", "custom"] = "custom"
+    category_label: str = Field(default="", max_length=20)
     cadence: Literal["daily", "weekly"] = "daily"
     weekdays: list[int] = Field(default_factory=list, max_length=7)
-    target_count: int = Field(default=1, ge=1, le=999)
+    # 0 表示不设数量目标，只按「今天做没做」打卡
+    target_count: int = Field(default=1, ge=0, le=999)
     unit: str = Field(default="次", max_length=8)
     reminder_time: str = Field(default="", max_length=5)
     note: str = Field(default="", max_length=500)
@@ -143,9 +146,10 @@ class PlanCreate(BaseModel):
 class PlanUpdate(BaseModel):
     title: str | None = Field(default=None, min_length=1, max_length=60)
     category: Literal["vocab", "reading", "exercise", "skill", "custom"] | None = None
+    category_label: str | None = Field(default=None, max_length=20)
     cadence: Literal["daily", "weekly"] | None = None
     weekdays: list[int] | None = None
-    target_count: int | None = Field(default=None, ge=1, le=999)
+    target_count: int | None = Field(default=None, ge=0, le=999)
     unit: str | None = Field(default=None, max_length=8)
     reminder_time: str | None = None
     note: str | None = Field(default=None, max_length=500)
@@ -202,12 +206,13 @@ def create_plan(payload: PlanCreate, user: dict = Depends(get_current_user)):
     reminder_time = _validate_time(payload.reminder_time)
     with db() as conn:
         cur = conn.execute(
-            "INSERT INTO plans (user_id, title, category, cadence, weekdays, target_count, "
-            "unit, reminder_time, note, active, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO plans (user_id, title, category, category_label, cadence, weekdays, target_count, "
+            "unit, reminder_time, note, active, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 user["id"],
                 payload.title.strip(),
                 payload.category,
+                payload.category_label.strip()[:20],
                 payload.cadence,
                 json.dumps(weekdays),
                 payload.target_count,
@@ -235,6 +240,9 @@ def update_plan(plan_id: int, payload: PlanUpdate, user: dict = Depends(get_curr
     if "category" in fields and fields["category"]:
         updates.append("category = ?")
         values.append(fields["category"])
+    if "category_label" in fields and fields["category_label"] is not None:
+        updates.append("category_label = ?")
+        values.append(fields["category_label"].strip()[:20])
     if "cadence" in fields and fields["cadence"]:
         updates.append("cadence = ?")
         values.append(fields["cadence"])
@@ -281,8 +289,14 @@ def _apply_progress(conn, plan, delta: int) -> tuple[int, bool, str]:
     day = _today()
     row = _progress_row(conn, int(plan["id"]), day)
     current = int(row["done_count"]) if row else 0
-    done = max(0, min(int(plan["target_count"]), current + delta))
-    completed = done >= int(plan["target_count"])
+    target = int(plan["target_count"])
+    if target <= 0:
+        # 不设数量目标：打卡一次即算完成，允许多次记录
+        done = max(0, min(999, current + delta))
+        completed = done > 0
+    else:
+        done = max(0, min(target, current + delta))
+        completed = done >= target
     if row:
         conn.execute(
             "UPDATE plan_progress SET done_count = ?, completed = ?, updated_at = ? WHERE id = ?",

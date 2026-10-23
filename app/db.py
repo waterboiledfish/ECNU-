@@ -49,6 +49,9 @@ def _migrate(conn: sqlite3.Connection) -> None:
     columns = {row["name"] for row in conn.execute("PRAGMA table_info(users)").fetchall()}
     if "department" not in columns:
         conn.execute("ALTER TABLE users ADD COLUMN department TEXT NOT NULL DEFAULT ''")
+    plan_columns = {row["name"] for row in conn.execute("PRAGMA table_info(plans)").fetchall()}
+    if "category_label" not in plan_columns:
+        conn.execute("ALTER TABLE plans ADD COLUMN category_label TEXT NOT NULL DEFAULT ''")
 
 
 def _seed_sites(conn: sqlite3.Connection) -> None:

@@ -12,7 +12,7 @@ from urllib.parse import urljoin, urlparse
 from ..config import settings
 from ..db import bump_index_version, db, jdumps, jloads
 from ..timeutil import now_iso
-from . import extract
+from . import extract, recency
 from .extract import FetchError
 
 
@@ -28,6 +28,7 @@ class CrawlManager:
             "site": "",
             "pages_ok": 0,
             "pages_failed": 0,
+            "pages_skipped_old": 0,
             "queued": 0,
             "message": "空闲",
             "errors": [],
@@ -93,6 +94,7 @@ class CrawlManager:
     def _run(self, run_id: int, sites: list[dict]) -> None:
         total_ok = 0
         total_failed = 0
+        total_skipped = 0
         errors: list[str] = []
         try:
             for index, site in enumerate(sites, start=1):
@@ -101,13 +103,15 @@ class CrawlManager:
                 with self._lock:
                     self._state["site"] = f"{site['name']}（{index}/{len(sites)}）"
                     self._state["message"] = "读取 robots.txt"
-                ok, failed, site_errors = self._crawl_site(site)
+                ok, failed, skipped_old, site_errors = self._crawl_site(site)
                 total_ok += ok
                 total_failed += failed
+                total_skipped += skipped_old
                 errors.extend(site_errors)
                 with self._lock:
                     self._state["pages_ok"] = total_ok
                     self._state["pages_failed"] = total_failed
+                    self._state["pages_skipped_old"] = total_skipped
                     self._state["errors"] = errors[-30:]
                 with db() as conn:
                     conn.execute(
@@ -131,7 +135,7 @@ class CrawlManager:
                         now_iso(),
                         total_ok,
                         total_failed,
-                        jdumps({"errors": errors[-30:]}),
+                        jdumps({"errors": errors[-30:], "skipped_old": total_skipped}),
                         run_id,
                     ),
                 )
@@ -141,21 +145,24 @@ class CrawlManager:
             with self._lock:
                 self._state["running"] = False
                 self._state["message"] = {
-                    "finished": f"采集完成：成功 {total_ok} 页，失败 {total_failed} 页",
+                    "finished": f"采集完成：成功 {total_ok} 页，失败 {total_failed} 页"
+                    + (f"，跳过 {total_skipped} 篇超出收录窗口" if total_skipped else ""),
                     "cancelled": "已停止采集",
                     "failed": "采集失败，请查看错误记录",
                 }[status]
                 self._state["pages_ok"] = total_ok
                 self._state["pages_failed"] = total_failed
+                self._state["pages_skipped_old"] = total_skipped
                 self._state["errors"] = errors[-30:]
 
-    def _crawl_site(self, site: dict) -> tuple[int, int, list[str]]:
+    def _crawl_site(self, site: dict) -> tuple[int, int, int, list[str]]:
         base = site["url"]
         robots = self._load_robots(base)
         queue: deque[tuple[str, int]] = deque([(base, 0)])
         visited: set[str] = set()
         ok = 0
         failed = 0
+        skipped_old = 0
         errors: list[str] = []
         max_pages = max(1, settings.crawl_max_pages_per_site)
         while queue and ok + failed < max_pages and not self._stop.is_set():
@@ -188,6 +195,9 @@ class CrawlManager:
             if len(content["text"]) < 60:
                 failed += 1
                 continue
+            if recency.is_too_old(content.get("published_at")):
+                skipped_old += 1  # 超出收录窗口：直接跳过，但保留链接继续爬
+                continue
             with db() as conn:
                 changed = self._save_document(conn, int(site["id"]), result["url"], content)
             if changed:
@@ -204,7 +214,7 @@ class CrawlManager:
                         and not self._skip_url(link)
                     ):
                         queue.append((link, depth + 1))
-        return ok, failed, errors
+        return ok, failed, skipped_old, errors
 
     @staticmethod
     def _same_site(url: str, base: str) -> bool:

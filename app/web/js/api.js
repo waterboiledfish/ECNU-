@@ -21,7 +21,7 @@ function errorMessage(data, status) {
 }
 
 export async function request(path, options = {}) {
-  const { method = 'GET', body, headers = {}, signal, raw = false } = options;
+  const { method = 'GET', body, headers = {}, signal, raw = false, timeout = 30000 } = options;
   const finalHeaders = { Accept: 'application/json', ...llmHeaders(), ...headers };
   let payload;
   if (body !== undefined) {
@@ -31,41 +31,59 @@ export async function request(path, options = {}) {
   if (method !== 'GET' && method !== 'HEAD' && store.csrf) {
     finalHeaders['X-CSRF-Token'] = store.csrf;
   }
-  let response;
+  // 没有外部取消信号时加一个超时，避免弹窗一直转圈
+  let timer = null;
+  let finalSignal = signal;
+  if (!signal && timeout > 0) {
+    const controller = new AbortController();
+    finalSignal = controller.signal;
+    timer = window.setTimeout(() => controller.abort(), timeout);
+  }
   try {
-    response = await fetch(path, {
-      method,
-      headers: finalHeaders,
-      body: payload,
-      signal,
-      credentials: 'same-origin'
-    });
-  } catch (err) {
-    if (err && err.name === 'AbortError') throw err;
-    throw new ApiError('网络连接失败，请确认服务仍在运行', 0);
+    let response;
+    try {
+      response = await fetch(path, {
+        method,
+        headers: finalHeaders,
+        body: payload,
+        signal: finalSignal,
+        credentials: 'same-origin'
+      });
+    } catch (err) {
+      if (err && err.name === 'AbortError') {
+        if (signal) throw err;
+        throw new ApiError('请求超时，请检查网络或稍后重试', 0);
+      }
+      throw new ApiError('网络连接失败，请确认服务仍在运行', 0);
+    } finally {
+      if (timer) { window.clearTimeout(timer); timer = null; }
+    }
+    const type = response.headers.get('content-type') || '';
+    let data = null;
+    if (type.includes('application/json')) {
+      try { data = await response.json(); } catch (e) { data = null; }
+    } else if (raw) {
+      data = await response.blob();
+    } else {
+      data = await response.text();
+    }
+    if (response.status === 401 && !path.startsWith('/api/auth/me')) {
+      window.dispatchEvent(new CustomEvent('auth:expired'));
+    }
+    if (!response.ok) {
+      throw new ApiError(errorMessage(data, response.status), response.status, data);
+    }
+    return data;
+  } finally {
+    if (timer) window.clearTimeout(timer);
   }
-  const type = response.headers.get('content-type') || '';
-  let data = null;
-  if (type.includes('application/json')) {
-    try { data = await response.json(); } catch (e) { data = null; }
-  } else if (raw) {
-    data = await response.blob();
-  } else {
-    data = await response.text();
-  }
-  if (response.status === 401 && !path.startsWith('/api/auth/me')) {
-    window.dispatchEvent(new CustomEvent('auth:expired'));
-  }
-  if (!response.ok) {
-    throw new ApiError(errorMessage(data, response.status), response.status, data);
-  }
-  return data;
 }
 
 export const api = {
   get: (path, options = {}) => request(path, { ...options, method: 'GET' }),
   post: (path, body, options = {}) => request(path, { ...options, method: 'POST', body }),
   patch: (path, body, options = {}) => request(path, { ...options, method: 'PATCH', body }),
+  put: (path, body, options = {}) => request(path, { ...options, method: 'PUT', body }),
   del: (path, options = {}) => request(path, { ...options, method: 'DELETE' }),
   request
 };

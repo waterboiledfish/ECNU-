@@ -218,12 +218,36 @@ export function safeHttpUrl(url) {
 }
 
 export async function copyText(text) {
+  const value = String(text == null ? '' : text);
+  if (navigator.clipboard && window.isSecureContext) {
+    try {
+      // 某些浏览器在窗口失焦时剪贴板 Promise 会一直挂着，加个超时再回退
+      await Promise.race([
+        navigator.clipboard.writeText(value),
+        new Promise((_, reject) => { window.setTimeout(() => reject(new Error('clipboard-timeout')), 1200); })
+      ]);
+      toast('已复制', 'success', 1800);
+      return true;
+    } catch (e) { /* 回退到 execCommand */ }
+  }
+  const ok = legacyCopy(value);
+  toast(ok ? '已复制' : '复制失败，请手动选择文本', ok ? 'success' : 'error', ok ? 1800 : 3200);
+  return ok;
+}
+
+function legacyCopy(text) {
   try {
-    await navigator.clipboard.writeText(text);
-    toast('已复制', 'success', 1800);
-    return true;
+    const area = document.createElement('textarea');
+    area.value = text;
+    area.setAttribute('readonly', '');
+    area.style.cssText = 'position:fixed;top:0;left:0;width:1px;height:1px;opacity:0';
+    document.body.appendChild(area);
+    area.select();
+    area.setSelectionRange(0, text.length);
+    const ok = document.execCommand('copy');
+    area.remove();
+    return ok;
   } catch (e) {
-    toast('复制失败，请手动选择文本', 'error');
     return false;
   }
 }

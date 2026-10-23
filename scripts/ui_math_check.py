@@ -115,16 +115,16 @@ def main() -> int:
         page.wait_for_timeout(1400)
         profile = page.evaluate("""() => {
           const select = document.querySelector('#profDepartment');
-          const list = document.querySelector('#profMajorOptions');
+          const major = document.querySelector('#profMajor');
           return {
             select: Boolean(select),
             departments: select ? select.options.length : 0,
-            majors: list ? list.querySelectorAll('option').length : 0
+            majors: major ? major.options.length : 0
           };
         }""")
         failures += 0 if check(
-            "个人设置有院系下拉与专业候选项",
-            profile["select"] and profile["departments"] >= 30 and profile["majors"] > 0,
+            "个人设置有院系下拉与专业候选",
+            profile["select"] and profile["departments"] >= 30 and profile["majors"] > 1,
             f'院系 {profile["departments"]} 项 / 专业 {profile["majors"]} 项',
         ) else 1
 

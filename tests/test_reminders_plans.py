@@ -172,6 +172,52 @@ def test_plan_coach_without_key(auth):
     assert "今日建议" in response.json()["advice"]
 
 
+def test_plan_custom_label_without_target_count(auth):
+    client, headers = auth["client"], auth["headers"]
+    response = client.post(
+        "/api/plans",
+        json={
+            "title": "每天练吉他",
+            "category": "custom",
+            "category_label": "吉他练习",
+            "target_count": 0,
+            "unit": "次",
+            "note": "练 30 分钟音阶，再弹一首曲子",
+        },
+        headers=headers,
+    )
+    assert response.status_code == 201, response.text
+    plan = response.json()
+    assert plan["category_label"] == "吉他练习"
+    assert plan["target_count"] == 0
+    assert plan["note"] == "练 30 分钟音阶，再弹一首曲子"
+
+    first = client.post(f"/api/plans/{plan['id']}/progress", json={"delta": 1}, headers=headers).json()
+    assert first["today"]["done"] == 1
+    assert first["today"]["completed"] is True
+
+    undo = client.post(f"/api/plans/{plan['id']}/progress", json={"delta": -1}, headers=headers).json()
+    assert undo["today"]["done"] == 0
+    assert undo["today"]["completed"] is False
+
+
+def test_plan_category_label_update(auth):
+    client, headers = auth["client"], auth["headers"]
+    plan = client.post(
+        "/api/plans",
+        json={"title": "每周练字", "category": "custom", "category_label": "书法", "target_count": 30, "unit": "分钟"},
+        headers=headers,
+    ).json()
+    updated = client.patch(
+        f"/api/plans/{plan['id']}",
+        json={"category_label": "硬笔书法", "target_count": 0},
+        headers=headers,
+    )
+    assert updated.status_code == 200
+    assert updated.json()["category_label"] == "硬笔书法"
+    assert updated.json()["target_count"] == 0
+
+
 def test_plan_validation(auth):
     client, headers = auth["client"], auth["headers"]
     response = client.post(

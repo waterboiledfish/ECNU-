@@ -140,6 +140,10 @@ class Settings:
         default_factory=lambda: _env_list("CRAWL_ALLOWED_SUFFIXES", "ecnu.edu.cn")
     )
     allow_user_crawl: bool = field(default_factory=lambda: _env_bool("ALLOW_USER_CRAWL", True))
+    # 只收录最近 N 天发布的官网文件；0 = 不限（可在「官网文件」页面调整）
+    source_max_age_days: int = field(
+        default_factory=lambda: _env_int("SOURCE_MAX_AGE_DAYS", 1095)
+    )
 
     portal_url: str = field(
         default_factory=lambda: _env(
@@ -149,7 +153,7 @@ class Settings:
 
     # 常量
     app_name: str = "ECNU 小助手"
-    version: str = "1.0.1"
+    version: str = "1.0.2"
     max_body_bytes: int = 1_200_000
     session_ttl_days: int = 30
     max_upload_bytes: int = 600_000

@@ -1,7 +1,7 @@
 import { api, streamRequest } from '../api.js';
 import { store, saveLLM, clearLLMKey } from '../store.js';
 import {
-  icon, esc, avatar, toast, openModal, safeHttpUrl
+  icon, esc, avatar, toast, openModal, safeHttpUrl, copyText, timeAgo
 } from '../ui.js';
 import { renderMarkdown, typeset } from '../markdown.js';
 
@@ -25,6 +25,8 @@ export async function renderChat(el, ctx) {
   const state = {
     mode,
     messages: [],
+    threads: [],
+    threadId: null,
     library: null,
     selectedSites: new Set(),
     siteQuery: '',
@@ -55,6 +57,7 @@ export async function renderChat(el, ctx) {
       </div>
     </section>
     <aside class="chat-side">
+      <div class="card pad-sm" id="threadCard"></div>
       <div class="card pad-sm" id="modelCard"></div>
       ${mode === 'official' ? `<div class="card pad-sm" id="libraryCard"></div><div class="card pad-sm" id="siteCard"></div>` : ''}
       <div class="card pad-sm">
@@ -78,7 +81,9 @@ export async function renderChat(el, ctx) {
   el.querySelector('#newChatBtn').addEventListener('click', () => {
     if (state.sending) return;
     state.messages = [];
+    state.threadId = null;
     renderLog();
+    renderThreadCard();
     input.focus();
   });
 
@@ -96,6 +101,99 @@ export async function renderChat(el, ctx) {
     if (!card) return;
     card.innerHTML = `<div class="section-title">${icon('sparkles')} 模型</div>${keyStatus()}`;
     card.querySelector('#openModelBtn').addEventListener('click', () => openModelSettings());
+  }
+
+  /* ---------------------------------------------------------- 历史对话 */
+  function renderThreadCard() {
+    const card = el.querySelector('#threadCard');
+    if (!card) return;
+    const items = state.threads || [];
+    card.innerHTML = `<div class="section-title">${icon('message')} 历史对话
+        <span class="spacer"></span><span class="tiny muted">${items.length ? `${items.length} 条` : ''}</span></div>
+      ${items.length ? `<div class="thread-list">${items.map((thread) => `
+        <div class="thread-item ${thread.id === state.threadId ? 'active' : ''}">
+          <button class="link-btn grow thread-open" type="button" data-open="${thread.id}" ${thread.id === state.threadId ? 'aria-current="true"' : ''}>${esc(thread.title || '新对话')}</button>
+          <span class="tiny muted">${esc(timeAgo(thread.updated_at))}</span>
+          <button class="icon-btn thread-del" type="button" data-del="${thread.id}" title="删除这条对话">${icon('trash')}</button>
+        </div>`).join('')}</div>`
+        : '<p class="tiny muted" style="line-height:1.7">还没有历史对话。提问后会自动保存，刷新或换页都不会丢。</p>'}`;
+    card.querySelectorAll('[data-open]').forEach((button) => {
+      button.addEventListener('click', () => openThread(Number(button.getAttribute('data-open'))));
+    });
+    card.querySelectorAll('[data-del]').forEach((button) => {
+      button.addEventListener('click', async (event) => {
+        event.stopPropagation();
+        await removeThread(Number(button.getAttribute('data-del')));
+      });
+    });
+  }
+
+  async function loadThreads() {
+    try {
+      const result = await api.get(`/api/chat/threads?mode=${mode}`);
+      state.threads = result.threads || [];
+    } catch (error) {
+      state.threads = [];
+    }
+    renderThreadCard();
+    return state.threads;
+  }
+
+  async function openThread(threadId) {
+    if (state.sending || threadId === state.threadId) return;
+    try {
+      const data = await api.get(`/api/chat/threads/${threadId}`);
+      state.threadId = data.id;
+      state.messages = (data.messages || []).map((message) => ({
+        role: message.role,
+        content: message.content || '',
+        sources: message.sources || [],
+        insufficient: !!message.insufficient,
+        error: message.error || ''
+      }));
+      renderLog();
+      renderThreadCard();
+    } catch (error) {
+      toast(error.message || '读取对话失败', 'error');
+    }
+  }
+
+  async function removeThread(threadId) {
+    try {
+      await api.del(`/api/chat/threads/${threadId}`);
+      if (state.threadId === threadId) {
+        state.threadId = null;
+        state.messages = [];
+        renderLog();
+      }
+      await loadThreads();
+      toast('对话已删除', 'success', 1600);
+    } catch (error) {
+      toast(error.message, 'error');
+    }
+  }
+
+  async function persistThread() {
+    const messages = state.messages
+      .filter((message) => message.content && String(message.content).trim())
+      .map((message) => ({
+        role: message.role,
+        content: message.content,
+        sources: message.sources || [],
+        insufficient: !!message.insufficient,
+        error: message.error || ''
+      }));
+    if (!messages.length) return;
+    try {
+      if (!state.threadId) {
+        const created = await api.post('/api/chat/threads', { mode });
+        state.threadId = Number(created.id);
+      }
+      await api.put(`/api/chat/threads/${state.threadId}`, { messages });
+      await loadThreads();
+    } catch (error) {
+      // 保存失败不影响本次对话
+    }
   }
 
   function renderLibraryCard() {
@@ -252,12 +350,9 @@ export async function renderChat(el, ctx) {
     }
     logEl.innerHTML = state.messages.map(messageHtml).join('');
     logEl.querySelectorAll('[data-copy]').forEach((btn) => {
-      btn.addEventListener('click', async () => {
+      btn.addEventListener('click', () => {
         const index = Number(btn.getAttribute('data-copy'));
-        try {
-          await navigator.clipboard.writeText(state.messages[index]?.content || '');
-          toast('回答已复制', 'success', 1600);
-        } catch (e) { toast('复制失败', 'error'); }
+        copyText(state.messages[index]?.content || '');
       });
     });
     typeset(logEl);
@@ -342,11 +437,13 @@ export async function renderChat(el, ctx) {
           assistant.insufficient = !!event.insufficient;
           assistant.streaming = false;
           renderLog();
+          persistThread();
         } else if (event.type === 'error') {
           assistant.error = event.detail || '回答失败，请稍后重试';
           assistant.streaming = false;
           renderLog();
           toast(assistant.error, 'error');
+          persistThread();
         }
       }, { signal: controller.signal });
     } catch (error) {
@@ -356,6 +453,7 @@ export async function renderChat(el, ctx) {
           assistant.streaming = false;
           assistant.content = assistant.content ? `${assistant.content}\n\n（已停止生成）` : '（已停止生成）';
           renderLog();
+          persistThread();
         }
       } else {
         const assistant = state.messages[assistantIndex];
@@ -363,6 +461,7 @@ export async function renderChat(el, ctx) {
           assistant.streaming = false;
           assistant.error = error.message || '请求失败，请稍后重试';
           renderLog();
+          persistThread();
         }
         toast(error.message || '请求失败', 'error');
       }
@@ -471,6 +570,7 @@ export async function renderChat(el, ctx) {
   sendBtn.addEventListener('click', send);
 
   renderModelCard();
+  renderThreadCard();
   renderLog();
   if (state.mode === 'official') {
     renderLibraryCard();
@@ -492,5 +592,7 @@ export async function renderChat(el, ctx) {
   } else {
     chatStatus();
   }
+  const threads = await loadThreads();
+  if (threads.length) await openThread(threads[0].id);
   input.focus();
 }

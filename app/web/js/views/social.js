@@ -214,8 +214,9 @@ export async function renderNotifications(el, ctx) {
 /* ------------------------------------------------------------ 个人设置 */
 function tagEditor(values, placeholder) {
   return `<div class="tag-input" data-tag-editor>
-    ${values.map((value) => `<span class="tag tag-teal" data-value="${esc(value)}">${esc(value)}<button type="button" data-remove>×</button></span>`).join('')}
-    <input maxlength="40" placeholder="${esc(placeholder)}">
+    ${values.map((value) => `<span class="tag tag-teal" data-value="${esc(value)}">${esc(value)}<button type="button" data-remove aria-label="移除">×</button></span>`).join('')}
+    <input maxlength="60" placeholder="${esc(placeholder)}">
+    <button class="tag-add" type="button" data-add aria-label="添加">＋</button>
   </div>`;
 }
 
@@ -270,9 +271,14 @@ export async function renderProfile(el, ctx) {
               ${academics.map((item) => `<option value="${esc(item.name)}" ${user.department === item.name ? 'selected' : ''}>${esc(item.name)}${item.category ? ` · ${esc(item.category)}` : ''}</option>`).join('')}
             </select></div>
             <div class="field"><label for="profMajor">专业</label>
-              <input class="input" id="profMajor" list="profMajorOptions" value="${esc(user.major || '')}" maxlength="40" placeholder="例如：计算机科学与技术">
-              <datalist id="profMajorOptions">${majorOptions(user.department || '').map((major) => `<option value="${esc(major)}"></option>`).join('')}</datalist>
-              <span class="hint">可从列表选择，也可以手动填写其他专业。</span>
+              <select class="select" id="profMajor">
+                <option value="">未填写</option>
+                ${majorOptions(user.department || '').map((major) => `<option value="${esc(major)}" ${user.major === major ? 'selected' : ''}>${esc(major)}</option>`).join('')}
+                <option value="__custom__" ${user.major && !majorOptions(user.department || '').includes(user.major) ? 'selected' : ''}>其他（手动填写）</option>
+              </select>
+              <input class="input mt-6" id="profMajorCustom" maxlength="40" placeholder="填写专业名称"
+                value="${esc(user.major && !majorOptions(user.department || '').includes(user.major) ? user.major : '')}"
+                ${user.major && !majorOptions(user.department || '').includes(user.major) ? '' : 'hidden'}>
             </div>
             <div class="field"><label for="profGrade">年级</label><select class="select" id="profGrade">
               <option value="">未填写</option>
@@ -403,10 +409,23 @@ export async function renderProfile(el, ctx) {
     toast('已清除 API Key', 'success');
   });
 
+  el.querySelector('#profMajor')?.addEventListener('change', (event) => {
+    const custom = el.querySelector('#profMajorCustom');
+    if (!custom) return;
+    const isCustom = event.target.value === '__custom__';
+    custom.hidden = !isCustom;
+    if (isCustom) custom.focus();
+  });
+
   el.querySelector('#profDepartment')?.addEventListener('change', (event) => {
-    const list = el.querySelector('#profMajorOptions');
-    if (!list) return;
-    list.innerHTML = majorOptions(event.target.value).map((major) => `<option value="${esc(major)}"></option>`).join('');
+    const select = el.querySelector('#profMajor');
+    const custom = el.querySelector('#profMajorCustom');
+    if (!select) return;
+    const list = majorOptions(event.target.value);
+    select.innerHTML = '<option value="">未填写</option>'
+      + list.map((major) => `<option value="${esc(major)}">${esc(major)}</option>`).join('')
+      + '<option value="__custom__">其他（手动填写）</option>';
+    if (custom) { custom.value = ''; custom.hidden = true; }
   });
 
   el.querySelector('#saveProfile').addEventListener('click', async () => {
@@ -420,7 +439,9 @@ export async function renderProfile(el, ctx) {
       const result = await api.patch('/api/profile', {
         nickname,
         bio: el.querySelector('#profBio').value.trim(),
-        major: el.querySelector('#profMajor').value.trim(),
+        major: el.querySelector('#profMajor')?.value === '__custom__'
+          ? el.querySelector('#profMajorCustom').value.trim()
+          : (el.querySelector('#profMajor')?.value || ''),
         department: el.querySelector('#profDepartment')?.value.trim() || '',
         grade: el.querySelector('#profGrade').value,
         directions,
@@ -466,31 +487,49 @@ export async function renderProfile(el, ctx) {
   function bindTagEditor(container) {
     if (!container) return;
     const input = container.querySelector('input');
-    const add = () => {
-      const value = input.value.trim();
-      if (!value) return;
-      if (Array.from(container.querySelectorAll('[data-value]')).some((node) => node.getAttribute('data-value') === value)) {
-        input.value = '';
-        return;
+    const addButton = container.querySelector('[data-add]');
+    // 容器是外层 div，真正的行内编辑器是 input 的父节点
+    const host = input.parentNode || container;
+    const add = (focus = true) => {
+      const raw = input.value.trim();
+      if (!raw) return;
+      // 支持一次粘贴多个：逗号、顿号、分号、换行都当作分隔符
+      const parts = raw.split(/[,，、;；\n]+/).map((item) => item.trim()).filter(Boolean).slice(0, 24);
+      let added = false;
+      for (const value of parts) {
+        const exists = Array.from(container.querySelectorAll('[data-value]'))
+          .some((node) => node.getAttribute('data-value') === value);
+        if (exists) continue;
+        const chip = document.createElement('span');
+        chip.className = 'tag tag-teal';
+        chip.setAttribute('data-value', value);
+        chip.innerHTML = `${esc(value)}<button type="button" data-remove aria-label="移除">×</button>`;
+        host.insertBefore(chip, input);
+        bindRemove(chip);
+        added = true;
       }
-      const chip = document.createElement('span');
-      chip.className = 'tag tag-teal';
-      chip.setAttribute('data-value', value);
-      chip.innerHTML = `${esc(value)}<button type="button" data-remove>×</button>`;
-      container.insertBefore(chip, input);
       input.value = '';
-      bindRemove(chip);
+      if (added && focus) input.focus();
     };
     const bindRemove = (chip) => {
       chip.querySelector('[data-remove]').addEventListener('click', () => chip.remove());
     };
     container.querySelectorAll('[data-value]').forEach(bindRemove);
     input.addEventListener('keydown', (event) => {
-      if (event.key === 'Enter') { event.preventDefault(); add(); }
+      // 中文输入法按回车是在确认候选词，此时不能当成「添加」
+      if (event.isComposing || event.keyCode === 229) return;
+      if (event.key === 'Enter' || event.key === ',' || event.key === '，') {
+        event.preventDefault();
+        add();
+        return;
+      }
       if (event.key === 'Backspace' && !input.value) {
         const chips = container.querySelectorAll('[data-value]');
         if (chips.length) chips[chips.length - 1].remove();
       }
     });
+    // 离开输入框也帮用户提交，避免「输了没按回车」导致丢失
+    input.addEventListener('blur', () => add(false));
+    addButton?.addEventListener('click', () => add());
   }
 }

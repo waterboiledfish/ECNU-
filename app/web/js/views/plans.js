@@ -24,7 +24,15 @@ function cadenceText(plan) {
 }
 
 function progressPercent(plan) {
-  return Math.min(100, Math.round((plan.today.done / Math.max(1, plan.today.target)) * 100));
+  const target = Number(plan.today.target) || 0;
+  if (target <= 0) return plan.today.completed ? 100 : 0;
+  return Math.min(100, Math.round((plan.today.done / target) * 100));
+}
+
+function targetText(plan) {
+  const target = Number(plan.target_count) || 0;
+  if (target <= 0) return '不设数量目标';
+  return `${target} ${plan.unit}`;
 }
 
 export async function renderPlans(el, ctx) {
@@ -44,7 +52,9 @@ export async function renderPlans(el, ctx) {
 
   function planCard(plan) {
     const meta = CATEGORY[plan.category] || CATEGORY.custom;
+    const label = plan.category_label || meta.label;
     const percent = progressPercent(plan);
+    const countGoal = (Number(plan.target_count) || 0) > 0;
     const dots = (plan.history || []).map((item) => {
       const today = item.day === plan.today.day;
       return `<span class="week-dot ${item.completed ? 'done' : ''} ${today ? 'today' : ''}" data-label="${item.label}"></span>`;
@@ -58,7 +68,7 @@ export async function renderPlans(el, ctx) {
         <div class="plan-icon">${meta.emoji}</div>
         <div class="grow">
           <div class="plan-title">${esc(plan.title)}</div>
-          <div class="plan-sub">${cadenceText(plan)} · ${plan.target_count} ${esc(plan.unit)}${plan.reminder_time ? ` · ${plan.reminder_time} 提醒` : ''}</div>
+          <div class="plan-sub"><span class="tag">${esc(label)}</span> ${cadenceText(plan)} · ${targetText(plan)}${plan.reminder_time ? ` · ${plan.reminder_time} 提醒` : ''}</div>
         </div>
         ${plan.active ? '' : '<span class="tag">已暂停</span>'}
         <div class="task-actions">
@@ -69,7 +79,7 @@ export async function renderPlans(el, ctx) {
       <div class="plan-progress-row">
         <div class="ring" style="--val:${percent}"><span>${percent}%</span></div>
         <div class="grow">
-          <div class="flex-between tiny muted"><span>今日进度</span><span>${plan.today.done}/${plan.today.target} ${esc(plan.unit)}</span></div>
+          <div class="flex-between tiny muted"><span>今日进度</span><span>${plan.today.done}${countGoal ? `/${plan.today.target}` : ''} ${countGoal ? esc(plan.unit) : '次'}</span></div>
           <div class="progress mt-6"><span style="width:${percent}%"></span></div>
           <div class="flex mt-10"><span class="tiny muted">连续 ${plan.streak} 天</span><div class="week-dots right">${dots}</div></div>
         </div>
@@ -78,7 +88,7 @@ export async function renderPlans(el, ctx) {
         ${vocabBadge}
         ${plan.category === 'vocab'
           ? `<button class="btn btn-sm btn-accent" data-action="vocab">${icon('play')}开始背诵</button>`
-          : `<button class="btn btn-sm btn-primary" data-action="plus" ${plan.today.completed ? 'disabled' : ''}>${icon('plus')}记一次</button>`}
+          : `<button class="btn btn-sm btn-primary" data-action="plus" ${countGoal && plan.today.completed ? 'disabled' : ''}>${icon('plus')}${countGoal ? '记一次' : '打卡'}</button>`}
         ${plan.today.done > 0 ? `<button class="btn btn-sm btn-ghost" data-action="minus" title="撤销一次" style="padding:0 10px">${icon('undo')}</button>` : ''}
         <button class="btn btn-sm btn-ghost" data-action="coach">${icon('sparkles')}AI 教练</button>
       </div>
@@ -91,21 +101,20 @@ export async function renderPlans(el, ctx) {
     const active = plans.filter((plan) => plan.active);
     el.innerHTML = `<div class="view-page">
       <div class="page-head">
-        <div><h2>定期计划</h2><p>把大目标拆成每天的一小步。打卡、连续记录、单词复习都由小助手帮你记着。</p></div>
+        <div><h2>定期计划</h2><p>把大目标拆成每天的一小步：打卡、连续记录，由小助手帮你记着。</p></div>
         <div class="page-head-actions"><button class="btn btn-primary" id="newPlanBtn" type="button">${icon('plus')}新建计划</button></div>
       </div>
       <div class="stat-row">
         <div class="stat"><div class="label">进行中</div><div class="value">${active.length}</div><div class="hint">共 ${plans.length} 个计划</div></div>
         <div class="stat"><div class="label">今日完成</div><div class="value">${data.summary.completed_today}</div><div class="hint">${data.summary.day}</div></div>
         <div class="stat"><div class="label">最长连续</div><div class="value">${Math.max(0, ...plans.map((plan) => plan.streak || 0))}</div><div class="hint">天</div></div>
-        <div class="stat"><div class="label">词汇复习</div><div class="value">${Object.values(vocabInfo).reduce((sum, item) => sum + (item.due || 0), 0)}</div><div class="hint">今天到期</div></div>
       </div>
       ${plans.length ? `<div class="grid grid-auto">${plans.map(planCard).join('')}</div>` : emptyState({
         iconName: 'calendar', title: '还没有计划',
-        desc: '从一个小目标开始：每天 20 个六级单词、每天读 20 页书，或每周运动 3 次。',
+        desc: '从一个简单描述开始：「每天晚上练 30 分钟吉他」「每周读一本书」。目标数量可以不填，打卡就算完成。',
         action: '<button class="btn btn-primary" id="emptyPlanBtn" type="button">创建第一个计划</button>'
       })}
-      <div class="notice notice-info">${icon('info')}<div>设置提醒时间后，到点会收到应用内通知与浏览器通知；勾选系统弹窗还会在本机弹出提醒。单词计划支持基于内置六级词库的间隔复习。</div></div>
+      <div class="notice notice-info">${icon('info')}<div>设置提醒时间后，到点会收到应用内通知与浏览器通知；勾选系统弹窗还会在本机弹出提醒。类别选「词汇」时，还可以用内置六级词库做间隔复习。</div></div>
     </div>`;
     bind();
   }
@@ -156,10 +165,18 @@ export async function renderPlans(el, ctx) {
 
   function openForm(plan) {
     const isEdit = !!plan;
-    const initial = plan || { title: '', category: 'vocab', cadence: 'daily', weekdays: [], target_count: 20, unit: '个', reminder_time: '21:00', note: '', active: true };
+    const initial = plan || {
+      title: '', category: 'custom', category_label: '', cadence: 'daily', weekdays: [],
+      target_count: 0, unit: '次', reminder_time: '21:00', note: '', active: true
+    };
+    const hasTarget = (Number(initial.target_count) || 0) > 0;
     const body = `<form id="planForm" class="stack">
       <div class="field"><label for="planTitle">计划名称</label>
-        <input class="input" id="planTitle" maxlength="60" required value="${esc(initial.title)}" placeholder="例如：每天背 20 个六级单词">
+        <input class="input" id="planTitle" maxlength="60" required value="${esc(initial.title)}" placeholder="例如：复习线性代数">
+      </div>
+      <div class="field"><label for="planNote">具体做什么（可选）</label>
+        <textarea class="textarea" id="planNote" maxlength="500" rows="2" style="min-height:70px" placeholder="简单描述一下，例如：每天看一章笔记，做 5 道课后题">${esc(initial.note || '')}</textarea>
+        <span class="hint">写清楚要做的事，AI 教练与提醒文案会参考这段描述。</span>
       </div>
       <div class="form-grid">
         <div class="field"><label for="planCategory">类别</label>
@@ -167,19 +184,17 @@ export async function renderPlans(el, ctx) {
             ${Object.entries(CATEGORY).map(([key, meta]) => `<option value="${key}" ${initial.category === key ? 'selected' : ''}>${meta.emoji} ${meta.label}</option>`).join('')}
           </select>
         </div>
+        <div class="field" id="categoryLabelField" style="${initial.category === 'custom' ? '' : 'display:none'}">
+          <label for="planCategoryLabel">自定义类型名称</label>
+          <input class="input" id="planCategoryLabel" maxlength="20" value="${esc(initial.category_label || '')}" placeholder="例如：吉他练习 / 书法">
+        </div>
         <div class="field"><label for="planCadence">频率</label>
           <select class="select" id="planCadence">
             <option value="daily" ${initial.cadence === 'daily' ? 'selected' : ''}>每天</option>
             <option value="weekly" ${initial.cadence === 'weekly' ? 'selected' : ''}>每周</option>
           </select>
         </div>
-        <div class="field"><label for="planTarget">目标数量</label>
-          <input class="input" id="planTarget" type="number" min="1" max="999" value="${initial.target_count}">
-        </div>
-        <div class="field"><label for="planUnit">单位</label>
-          <input class="input" id="planUnit" maxlength="8" value="${esc(initial.unit)}" placeholder="个 / 页 / 次">
-        </div>
-        <div class="field"><label for="planTime">每日提醒时间（可选）</label>
+        <div class="field"><label for="planTime">提醒时间（可选）</label>
           <input class="input" id="planTime" type="time" value="${esc(initial.reminder_time || '')}">
         </div>
         <div class="field" id="weekdayField" style="${initial.cadence === 'weekly' ? '' : 'display:none'}">
@@ -191,8 +206,16 @@ export async function renderPlans(el, ctx) {
           </div>
         </div>
       </div>
-      <div class="field"><label for="planNote">备注（可选）</label>
-        <textarea class="textarea" id="planNote" maxlength="500" rows="2" style="min-height:70px">${esc(initial.note || '')}</textarea>
+      <label class="check"><input type="checkbox" id="planUseTarget" ${hasTarget ? 'checked' : ''}>
+        <span><span class="check-title">设置数量目标（可选）</span><span class="check-desc">不勾选时，每天打卡一次就算完成，适合「练琴」「读一章」这类没有固定数量的计划。</span></span>
+      </label>
+      <div class="form-grid" id="targetFields" style="${hasTarget ? '' : 'display:none'}">
+        <div class="field"><label for="planTarget">目标数量</label>
+          <input class="input" id="planTarget" type="number" min="1" max="999" value="${hasTarget ? initial.target_count : 1}">
+        </div>
+        <div class="field"><label for="planUnit">单位</label>
+          <input class="input" id="planUnit" maxlength="8" value="${esc(initial.unit || '次')}" placeholder="个 / 页 / 分钟">
+        </div>
       </div>
     </form>`;
     openModal({
@@ -202,11 +225,18 @@ export async function renderPlans(el, ctx) {
         <button class="btn btn-primary" type="button" id="savePlanBtn">${isEdit ? '保存修改' : '创建计划'}</button>`,
       onMount: (root, close) => {
         const category = root.querySelector('#planCategory');
+        const labelField = root.querySelector('#categoryLabelField');
+        const useTarget = root.querySelector('#planUseTarget');
+        const targetFields = root.querySelector('#targetFields');
         const target = root.querySelector('#planTarget');
         const unit = root.querySelector('#planUnit');
         category.addEventListener('change', () => {
+          labelField.style.display = category.value === 'custom' ? '' : 'none';
           const meta = CATEGORY[category.value];
-          if (!isEdit && meta) { target.value = meta.target; unit.value = meta.unit; }
+          if (!isEdit && meta && useTarget.checked) { target.value = meta.target; unit.value = meta.unit; }
+        });
+        useTarget.addEventListener('change', () => {
+          targetFields.style.display = useTarget.checked ? '' : 'none';
         });
         const cadence = root.querySelector('#planCadence');
         cadence.addEventListener('change', () => {
@@ -215,14 +245,17 @@ export async function renderPlans(el, ctx) {
         root.querySelector('#savePlanBtn').addEventListener('click', async () => {
           const title = root.querySelector('#planTitle').value.trim();
           if (!title) { toast('请填写计划名称', 'warn'); return; }
+          const categoryLabel = root.querySelector('#planCategoryLabel').value.trim();
+          if (category.value === 'custom' && !categoryLabel) { toast('请填写自定义类型名称', 'warn'); return; }
           const weekdays = Array.from(root.querySelectorAll('input[name=weekday]:checked')).map((input) => Number(input.value));
           if (cadence.value === 'weekly' && !weekdays.length) { toast('每周计划请选择至少一天', 'warn'); return; }
           const payload = {
             title,
             category: category.value,
+            category_label: categoryLabel,
             cadence: cadence.value,
             weekdays,
-            target_count: Number(target.value) || 1,
+            target_count: useTarget.checked ? (Number(target.value) || 1) : 0,
             unit: unit.value.trim() || '次',
             reminder_time: root.querySelector('#planTime').value || '',
             note: root.querySelector('#planNote').value.trim(),
