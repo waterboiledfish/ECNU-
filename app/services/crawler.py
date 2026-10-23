@@ -213,7 +213,7 @@ class CrawlManager:
                 ).fetchall()
             }
         # 每个栏目最多抓 per_section 篇正文，避免英文站/师资页把页数预算吃光
-        per_section = max(4, max_pages // 8)
+        per_section = max(6, max_pages // 4)
         section_counts: dict[str, int] = {}
         while queue and ok + failed < max_pages and not self._stop.is_set():
             url, depth = queue.popleft()
