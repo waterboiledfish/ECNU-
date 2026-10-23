@@ -403,7 +403,7 @@ export async function renderChat(el, ctx) {
       : `${renderMarkdown(message.content)}${streaming ? '<span class="typing" style="margin-left:6px"><i></i></span>' : ''}`;
     const sources = sourcesHtml(message.sources, false);
     const warning = message.insufficient
-      ? `<div class="notice notice-warn mt-10">${icon('alert')}<div>已索引的文件不足以回答这个问题。可以到「官网文件」补充采集，或换一个更具体的关键词。</div></div>`
+      ? `<div class="notice notice-warn mt-10">${icon('alert')}<div>已索引的文件不足以回答这个问题。<a href="#/sources">到「官网文件」补充采集</a>，或用「导入链接」贴入这份文件的具体网址，也可以换个更具体的关键词。</div></div>`
       : '';
     return `<div class="msg assistant ${message.error ? 'error' : ''}" id="msg-${index}">
       <div class="msg-avatar"><span class="avatar avatar-xs" style="background:linear-gradient(135deg,#0b3a66,#16a3a0)">E</span></div>

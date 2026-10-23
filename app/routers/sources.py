@@ -71,6 +71,7 @@ def list_sources(user: dict = Depends(get_current_user)):
                 "pages_ok": last["pages_ok"],
                 "pages_failed": last["pages_failed"],
                 "skipped_old": int(detail.get("skipped_old", 0) or 0),
+                "skipped_fresh": int(detail.get("skipped_fresh", 0) or 0),
                 "errors": detail.get("errors", [])[-8:],
             }
     return {

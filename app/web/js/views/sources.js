@@ -117,14 +117,16 @@ export async function renderSources(el, ctx) {
     const ok = lastRun.pages_ok || 0;
     const bad = lastRun.pages_failed || 0;
     const old = lastRun.skipped_old || 0;
+    const fresh = lastRun.skipped_fresh || 0;
     const status = lastRun.status === 'running' ? '进行中' : (bad ? '部分失败' : '已完成');
     const errors = (lastRun.errors || []).filter(Boolean).slice(-3);
     return `<section class="card pad-sm">
       <div class="flex-between"><div class="small strong">${icon('clock')} 最近一次采集 · ${esc(status)}</div>
         <span class="tiny muted">${lastRun.finished_at ? esc(fmtDateTime(lastRun.finished_at)) : ''}</span></div>
-      <div class="tiny muted mt-6">成功 ${ok} 页 · 失败 ${bad} 页${old ? ` · 跳过 ${old} 篇超出收录范围` : ''}${lastRun.started_at ? ` · 开始于 ${esc(fmtDateTime(lastRun.started_at))}` : ''}</div>
+      <div class="tiny muted mt-6">成功 ${ok} 页 · 失败 ${bad} 页${old ? ` · 跳过 ${old} 篇超出收录范围` : ''}${fresh ? ` · 跳过 ${fresh} 篇已抓过` : ''}${lastRun.started_at ? ` · 开始于 ${esc(fmtDateTime(lastRun.started_at))}` : ''}</div>
       ${errors.length ? `<div class="crawl-error mt-6">${errors.map(esc).join('<br>')}</div>` : ''}
       ${bad ? '<div class="tiny muted mt-6">失败的站点会保留官网链接，可点「导入链接」单独补充具体文件。</div>' : ''}
+      ${fresh ? '<div class="tiny muted mt-6">已抓过的正文不再重复抓，再点一次「采集」会继续往里抓新页面。</div>' : ''}
     </section>`;
   }
 

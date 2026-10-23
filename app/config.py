@@ -127,7 +127,11 @@ class Settings:
 
     # 采集
     crawl_max_pages_per_site: int = field(
-        default_factory=lambda: _env_int("CRAWL_MAX_PAGES_PER_SITE", 30)
+        default_factory=lambda: _env_int("CRAWL_MAX_PAGES_PER_SITE", 50)
+    )
+    # 已抓过的正文页在这么多天内不重复抓，把页数预算留给新页面
+    crawl_refresh_days: int = field(
+        default_factory=lambda: _env_int("CRAWL_REFRESH_DAYS", 7)
     )
     crawl_max_depth: int = field(default_factory=lambda: _env_int("CRAWL_MAX_DEPTH", 3))
     crawl_delay_seconds: float = field(
@@ -153,7 +157,7 @@ class Settings:
 
     # 常量
     app_name: str = "ECNU 小助手"
-    version: str = "1.0.5"
+    version: str = "1.0.6"
     max_body_bytes: int = 1_200_000
     session_ttl_days: int = 30
     max_upload_bytes: int = 600_000

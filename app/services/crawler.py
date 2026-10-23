@@ -2,16 +2,18 @@
 from __future__ import annotations
 
 import hashlib
+import re
 import threading
 import time
 import urllib.robotparser
 from collections import deque
+from datetime import timedelta
 from typing import Any
 from urllib.parse import urljoin, urlparse
 
 from ..config import settings
 from ..db import bump_index_version, db, jdumps, jloads
-from ..timeutil import now_iso
+from ..timeutil import now_iso, now_utc
 from . import extract, recency
 from .extract import FetchError
 
@@ -114,6 +116,7 @@ class CrawlManager:
         total_ok = 0
         total_failed = 0
         total_skipped = 0
+        total_fresh = 0
         errors: list[str] = []
         try:
             for index, site in enumerate(sites, start=1):
@@ -122,15 +125,17 @@ class CrawlManager:
                 with self._lock:
                     self._state["site"] = f"{site['name']}（{index}/{len(sites)}）"
                     self._state["message"] = "读取 robots.txt"
-                ok, failed, skipped_old, site_errors = self._crawl_site(site)
+                ok, failed, skipped_old, skipped_fresh, site_errors = self._crawl_site(site)
                 total_ok += ok
                 total_failed += failed
                 total_skipped += skipped_old
+                total_fresh += skipped_fresh
                 errors.extend(site_errors)
                 with self._lock:
                     self._state["pages_ok"] = total_ok
                     self._state["pages_failed"] = total_failed
                     self._state["pages_skipped_old"] = total_skipped
+                    self._state["pages_skipped_fresh"] = total_fresh
                     self._state["errors"] = errors[-30:]
                 with db() as conn:
                     conn.execute(
@@ -154,7 +159,13 @@ class CrawlManager:
                         now_iso(),
                         total_ok,
                         total_failed,
-                        jdumps({"errors": errors[-30:], "skipped_old": total_skipped}),
+                        jdumps(
+                            {
+                                "errors": errors[-30:],
+                                "skipped_old": total_skipped,
+                                "skipped_fresh": total_fresh,
+                            }
+                        ),
                         run_id,
                     ),
                 )
@@ -163,9 +174,15 @@ class CrawlManager:
                 )
             with self._lock:
                 self._state["running"] = False
+                extra = []
+                if total_skipped:
+                    extra.append(f"跳过 {total_skipped} 篇超出收录窗口")
+                if total_fresh:
+                    extra.append(f"跳过 {total_fresh} 篇已抓过")
                 self._state["message"] = {
                     "finished": f"采集完成：成功 {total_ok} 页，失败 {total_failed} 页"
-                    + (f"，跳过 {total_skipped} 篇超出收录窗口" if total_skipped else ""),
+                    + (f"，{'，'.join(extra)}" if extra else "")
+                    + ("；再点一次采集会继续往里抓新页面" if total_fresh else ""),
                     "cancelled": "已停止采集",
                     "failed": "采集失败，请查看错误记录",
                 }[status]
@@ -174,7 +191,7 @@ class CrawlManager:
                 self._state["pages_skipped_old"] = total_skipped
                 self._state["errors"] = errors[-30:]
 
-    def _crawl_site(self, site: dict) -> tuple[int, int, int, list[str]]:
+    def _crawl_site(self, site: dict) -> tuple[int, int, int, int, list[str]]:
         base = site["url"]
         robots = self._load_robots(base)
         queue: deque[tuple[str, int]] = deque([(base, 0)])
@@ -182,8 +199,22 @@ class CrawlManager:
         ok = 0
         failed = 0
         skipped_old = 0
+        skipped_fresh = 0
         errors: list[str] = []
         max_pages = max(1, settings.crawl_max_pages_per_site)
+        # 最近抓过的正文页不再重复抓：多次点「采集」会逐层往里走，而不是反复抓同一批页面
+        cutoff = (now_utc() - timedelta(days=max(0, settings.crawl_refresh_days))).isoformat()
+        with db() as conn:
+            fresh_articles = {
+                row["url"]
+                for row in conn.execute(
+                    "SELECT url FROM documents WHERE site_id = ? AND fetched_at >= ?",
+                    (site["id"], cutoff),
+                ).fetchall()
+            }
+        # 每个栏目最多抓 per_section 篇正文，避免英文站/师资页把页数预算吃光
+        per_section = max(4, max_pages // 8)
+        section_counts: dict[str, int] = {}
         while queue and ok + failed < max_pages and not self._stop.is_set():
             url, depth = queue.popleft()
             if url in visited:
@@ -191,6 +222,14 @@ class CrawlManager:
             visited.add(url)
             if robots is not None and not robots.can_fetch(settings.user_agent, url):
                 continue
+            if url in fresh_articles and self._article_like(url):
+                skipped_fresh += 1
+                continue
+            if self._article_like(url):
+                section = self._section_of(url)
+                if section_counts.get(section, 0) >= per_section:
+                    continue
+                section_counts[section] = section_counts.get(section, 0) + 1
             with self._lock:
                 self._state["queued"] = len(queue)
                 self._state["message"] = f"正在采集：{urlparse(url).netloc}{urlparse(url).path[:40]}"
@@ -225,6 +264,7 @@ class CrawlManager:
                 failed += 1  # 未变化：计入跳过
             if depth < settings.crawl_max_depth:
                 for link in content.get("links", []):
+                    link = self._normalize(link, base)
                     if (
                         link not in visited
                         and len(queue) < 600
@@ -232,8 +272,50 @@ class CrawlManager:
                         and self._same_site(link, base)
                         and not self._skip_url(link)
                     ):
-                        queue.append((link, depth + 1))
-        return ok, failed, skipped_old, errors
+                        item = (link, depth + 1)
+                        # 正文页优先：列表页的链接很多，先抓文章正文再抓导航页
+                        if self._article_like(link):
+                            queue.appendleft(item)
+                        else:
+                            queue.append(item)
+        return ok, failed, skipped_old, skipped_fresh, errors
+
+    ARTICLE_HINTS = ("/info/", "/content/", "/article/", "/news/", "/tzgg/", "/detail", "/xwzx/")
+    # 博达 CMS 常见的正文页：/83/97/c33171a361367/page.htm、/2026/0923/c1847a123456/page.htm
+    _CMS_ARTICLE = re.compile(r"/c\d+a\d+(?:[./]|$)")
+    _PAGE_ARTICLE = re.compile(r"/\d{3,}/page\.(?:htm|html|shtml)$")
+    _LIST_PAGE = re.compile(r"/list\d*\.(?:htm|html|shtml)$|/index(?:_\d+)?\.(?:htm|html|shtml)$")
+
+    @classmethod
+    def _article_like(cls, url: str) -> bool:
+        """粗略判断是不是「文章正文页」：路径带 CMS 文章 id 或常见栏目，列表页除外。"""
+        path = urlparse(url).path.lower()
+        if cls._LIST_PAGE.search(path):
+            return False
+        if any(hint in path for hint in cls.ARTICLE_HINTS):
+            return True
+        if cls._CMS_ARTICLE.search(path):
+            return True
+        return bool(cls._PAGE_ARTICLE.search(path))
+
+    @staticmethod
+    def _normalize(url: str, base: str) -> str:
+        """https 站点上的 http:// 链接统一升级成 https：不少学校站对 http 直接回 502。"""
+        if base.startswith("https://") and url.startswith("http://"):
+            return "https://" + url[len("http://") :]
+        return url
+
+    _COLUMN_ID = re.compile(r"/c(\d+)a\d+")
+
+    @classmethod
+    def _section_of(cls, url: str) -> str:
+        """栏目标识：博达 CMS 用栏目 id（c33171），其它站退回第一段路径。"""
+        path = urlparse(url).path.lower()
+        match = cls._COLUMN_ID.search(path)
+        if match:
+            return f"c{match.group(1)}"
+        parts = [part for part in path.split("/") if part]
+        return parts[0] if parts else "/"
 
     @staticmethod
     def _same_site(url: str, base: str) -> bool:
