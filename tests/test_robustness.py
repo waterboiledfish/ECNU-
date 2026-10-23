@@ -89,6 +89,18 @@ def test_version_has_single_source(client):
     assert client.get("/api/health").json()["version"] == settings.version
 
 
+def test_static_assets_ask_browser_to_revalidate(client):
+    """前端没有构建哈希：脚本必须每次协商，否则升级后浏览器会一直用旧版。"""
+    script = client.get("/static/js/app.js")
+    assert script.status_code == 200
+    assert script.headers["cache-control"] == "no-cache"
+    style = client.get("/static/css/app.css")
+    assert style.headers["cache-control"] == "no-cache"
+    icon = client.get("/static/favicon.svg")
+    assert icon.status_code == 200
+    assert icon.headers["cache-control"].startswith("public")
+
+
 def test_study_falls_back_when_bilibili_blocked(monkeypatch):
     from app.services import recs
 

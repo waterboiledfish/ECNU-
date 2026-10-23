@@ -140,13 +140,24 @@ def _search(kind: str, keyword: str, limit: int) -> list[dict[str, Any]]:
 
 
 def queries_for(user: dict) -> list[str]:
-    courses = [c for c in (user.get("courses") or []) if c][:3]
-    directions = [d for d in (user.get("directions") or []) if d][:2]
+    """按「课程 → 方向 → 专业/年级 → 通用」的顺序拼检索词，最多两条。
+
+    资料里什么都没填时，之前只能拿到「大学学习方法」这种通用结果；
+    现在会退而用专业与年级检索，命中率明显更高。
+    """
+    courses = [c for c in (user.get("courses") or []) if c][:2]
+    directions = [d for d in (user.get("directions") or []) if d][:1]
+    major = re.sub(r"\s+", " ", str(user.get("major") or "")).strip()[:24]
+    grade = str(user.get("grade") or "").strip()[:8]
     queries = [f"{course} 期末复习" for course in courses]
     queries += [f"{direction} 入门" for direction in directions]
+    if major:
+        queries.append(f"{grade} {major} 专业课".strip() if grade else f"{major} 专业课")
+    if len(queries) < 2 and grade:
+        queries.append(f"{grade} 学习规划")
     if not queries:
         queries = ["大学学习方法"]
-    return queries[:2]
+    return list(dict.fromkeys(queries))[:2]
 
 
 def _fallback(queries: list[str]) -> dict[str, Any]:
@@ -189,6 +200,22 @@ def recommend(user: dict, refresh: bool = False) -> dict[str, Any]:
             blocked = True
         except (requests.RequestException, ValueError):
             pass
+
+    # 风控期间一条都拿不到时，先复用上次成功抓到的结果，别让页面突然只剩检索链接
+    if blocked and not videos and not docs:
+        stale = cache.get_stale(key)
+        if stale and (stale.get("videos") or stale.get("docs")):
+            return {
+                **stale,
+                "queries": queries,
+                "cached": True,
+                "stale": True,
+                "blocked": True,
+                "note": (
+                    "B 站暂时触发了访问风控，先显示上次成功抓到的结果；"
+                    "过几分钟点「换一批」会重新抓取。"
+                ),
+            }
 
     def dedupe(rows: list[dict[str, Any]], limit: int) -> list[dict[str, Any]]:
         seen: set[str] = set()

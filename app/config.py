@@ -74,6 +74,27 @@ def _default_data_dir() -> Path:
     return (Path.home() / ".ecnu-assistant").resolve()
 
 
+def lan_ipv4_addresses() -> list[str]:
+    """当前机器的局域网 IPv4（用于把访问地址告诉同学）。"""
+    import socket
+
+    addresses: set[str] = set()
+    try:
+        for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
+            addresses.add(info[4][0])
+    except OSError:
+        pass
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            sock.connect(("223.5.5.5", 80))  # 只为拿到默认路由出口地址，不发包
+            addresses.add(sock.getsockname()[0])
+    except OSError:
+        pass
+    return sorted(
+        ip for ip in addresses if not ip.startswith(("127.", "169.254.", "0."))
+    )
+
+
 @dataclass
 class Settings:
     """应用配置。实例在进程内只读使用。"""
@@ -161,7 +182,7 @@ class Settings:
 
     # 常量
     app_name: str = "ECNU 小助手"
-    version: str = "1.0.8"
+    version: str = "1.0.9"
     max_body_bytes: int = 1_200_000
     session_ttl_days: int = 30
     max_upload_bytes: int = 600_000
@@ -209,6 +230,24 @@ class Settings:
         if self.auth_mode == "oidc":
             return bool(self.oidc_issuer and self.oidc_client_id and self.oidc_redirect_uri)
         return self.dev_login_enabled
+
+    @property
+    def lan_enabled(self) -> bool:
+        """是否监听所有网卡（0.0.0.0 / ::），即局域网或公网可访问。"""
+        return self.host in {"0.0.0.0", "::", "[::]"}
+
+    @property
+    def access_urls(self) -> list[str]:
+        """本机与局域网的访问地址，仅用于展示与排障。"""
+        hosts = ["127.0.0.1"]
+        if self.lan_enabled:
+            hosts.extend(lan_ipv4_addresses())
+        urls: list[str] = []
+        for host in hosts:
+            url = f"http://{host}:{self.port}"
+            if url not in urls:
+                urls.append(url)
+        return urls
 
     @property
     def auth_label(self) -> str:

@@ -50,4 +50,11 @@ def meta():
             "max_upload_bytes": settings.max_upload_bytes,
             "max_question_chars": 2000,
         },
+        "access": {
+            "bind": settings.host,
+            "port": settings.port,
+            "urls": settings.access_urls,
+            "lan_enabled": settings.lan_enabled,
+            "public_base_url": settings.public_base_url,
+        },
     }

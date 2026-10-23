@@ -112,6 +112,69 @@ function appealDialog(targetType, targetId) {
   });
 }
 
+/* ------------------------------------------------------------ 首页模块 */
+function announcementHtml(home) {
+  const ann = home && home.announcement;
+  if (!ann) return '';
+  const isAdmin = store.user && store.user.role === 'admin';
+  const updated = ann.updated_at ? `<span class="tiny muted">更新于 ${timeAgo(ann.updated_at)}</span>` : '';
+  const link = safeHttpUrl(ann.link)
+    ? `<a class="tiny" href="${esc(safeHttpUrl(ann.link))}" target="_blank" rel="noopener">查看详情</a>` : '';
+  const stats = home.stats || {};
+  const statsLine = [
+    `今日 ${stats.today_posts || 0} 条新帖`,
+    `共 ${stats.posts || 0} 篇帖子`,
+    `${stats.comments || 0} 条回复`,
+    `${stats.users || 0} 位同学`
+  ].join(' · ');
+  return `<div class="card pad-sm forum-announce">
+    <div class="forum-announce-head">${icon('bell')}<strong>${esc(ann.title || '全站公告')}</strong>${updated}
+      <span class="spacer"></span>
+      ${link}
+      ${isAdmin ? `<button class="btn btn-sm btn-ghost" type="button" id="editAnnouncement">${icon('edit')} 编辑公告</button>` : ''}
+    </div>
+    <p class="forum-announce-text">${esc(ann.text || '')}</p>
+    <div class="tiny muted forum-announce-stats">${esc(statsLine)}</div>
+  </div>`;
+}
+
+function carouselHtml(home) {
+  const items = (home && home.carousel) || [];
+  if (!items.length) return '';
+  const slides = items.map((post, index) => `
+    <a class="carousel-slide ${index === 0 ? 'active' : ''}" href="#/forum/${post.id}" data-slide="${index}" aria-hidden="${index === 0 ? 'false' : 'true'}">
+      <span class="carousel-kicker">${icon('fire')}<span>${esc(post.board_name || '论坛')}</span><span class="dot-sep">·</span><span>${post.views} 浏览</span><span class="dot-sep">·</span><span>${post.comments} 回复</span></span>
+      <span class="carousel-title">${esc(post.title)}</span>
+      <span class="carousel-sub">${esc(String(post.body || '').replace(/\s+/g, ' ').slice(0, 80))}</span>
+      <span class="carousel-by">${esc(post.author?.nickname || '已注销用户')} · ${timeAgo(post.created_at)}</span>
+    </a>`).join('');
+  const dots = items.map((_, index) => `<button class="carousel-dot ${index === 0 ? 'active' : ''}" type="button" data-dot="${index}" aria-label="第 ${index + 1} 条"></button>`).join('');
+  const bar = items.length > 1
+    ? `<div class="carousel-bar"><span class="tiny muted">热门轮播 · ${items.length} 条</span><span class="carousel-dots">${dots}</span></div>`
+    : '';
+  return `<div class="card carousel" id="forumCarousel">
+    <div class="carousel-track">${slides}</div>
+    ${bar}
+  </div>`;
+}
+
+function recommendedHtml(home) {
+  const items = (home && home.recommended) || [];
+  if (!items.length) return '';
+  return `<div class="card pad-sm">
+    <div class="section-title">${icon('fire')} 推荐阅读</div>
+    <div class="reco-list">
+      ${items.map((post, index) => `<a class="reco-row" href="#/forum/${post.id}">
+        <span class="reco-rank ${index < 3 ? 'hot' : ''}">${index + 1}</span>
+        <span class="reco-main">
+          <span class="reco-title">${esc(post.title)}</span>
+          <span class="reco-meta">${esc(post.board_name || '论坛')} · ${post.views} 浏览 · ${post.comments} 回复</span>
+        </span>
+      </a>`).join('')}
+    </div>
+  </div>`;
+}
+
 /* ------------------------------------------------------------ 列表 */
 export async function renderForumList(el, ctx) {
   const state = {
@@ -123,6 +186,7 @@ export async function renderForumList(el, ctx) {
     page: 1,
     size: 10,
     boards: [],
+    home: null,
     data: null
   };
   el.innerHTML = loadingBlock('正在打开论坛…');
@@ -135,6 +199,13 @@ export async function renderForumList(el, ctx) {
         state.boards = (await api.get('/api/forum/boards')).boards || [];
       } catch (error) {
         state.boards = [];
+      }
+    }
+    if (!state.home) {
+      try {
+        state.home = await api.get('/api/forum/home');
+      } catch (error) {
+        state.home = null;
       }
     }
     const params = new URLSearchParams({
@@ -176,6 +247,8 @@ export async function renderForumList(el, ctx) {
         <div><h2>校园论坛</h2><p>经验、生活、寻物与学习交流。支持匿名发帖、评论、私信与关注；内容会经过规则与 AI 预审。</p></div>
         <div class="page-head-actions"><a class="btn btn-primary" href="#/forum/new">${icon('plus')}发布帖子</a></div>
       </div>
+      ${announcementHtml(state.home)}
+      ${carouselHtml(state.home)}
       <div class="forum-layout">
         <div class="stack">
           <div class="toolbar">
@@ -204,6 +277,7 @@ export async function renderForumList(el, ctx) {
           ${postsHtml()}
         </div>
         <aside class="forum-side">
+          ${recommendedHtml(state.home)}
           <div class="card pad-sm">
             <div class="section-title">${icon('users')} 版面</div>
             <div class="tag-list">
@@ -259,6 +333,64 @@ export async function renderForumList(el, ctx) {
       load(false).catch((error) => toast(error.message, 'error'));
     });
     bindQuickActions(el);
+    bindHomeModules();
+  }
+
+  function bindHomeModules() {
+    const carousel = el.querySelector('#forumCarousel');
+    if (carousel) {
+      const slides = [...carousel.querySelectorAll('.carousel-slide')];
+      const dots = [...carousel.querySelectorAll('[data-dot]')];
+      let current = 0;
+      let timer = null;
+      const show = (index) => {
+        current = (index + slides.length) % slides.length;
+        slides.forEach((slide, i) => {
+          slide.classList.toggle('active', i === current);
+          slide.setAttribute('aria-hidden', i === current ? 'false' : 'true');
+        });
+        dots.forEach((dot, i) => dot.classList.toggle('active', i === current));
+      };
+      const restart = () => {
+        if (timer) window.clearInterval(timer);
+        timer = window.setInterval(() => {
+          if (!document.body.contains(carousel)) { window.clearInterval(timer); return; }
+          show(current + 1);
+        }, 6000);
+      };
+      dots.forEach((dot) => dot.addEventListener('click', () => {
+        show(Number(dot.getAttribute('data-dot')));
+        restart();
+      }));
+      if (slides.length > 1) restart();
+    }
+    el.querySelector('#editAnnouncement')?.addEventListener('click', () => {
+      const ann = (state.home && state.home.announcement) || {};
+      openModal({
+        title: '编辑全站公告',
+        body: `<label class="field"><span class="hint">标题</span><input class="input" id="annTitle" maxlength="20" value="${esc(ann.title || '全站公告')}"></label>
+          <label class="field mt-10"><span class="hint">正文（最多 300 字）</span><textarea class="textarea" id="annText" rows="4" maxlength="300">${esc(ann.text || '')}</textarea></label>
+          <label class="field mt-10"><span class="hint">详情链接（可选）</span><input class="input" id="annLink" maxlength="300" placeholder="https://" value="${esc(ann.link || '')}"></label>`,
+        footer: '<button class="btn btn-ghost" data-close>取消</button><button class="btn btn-primary" id="saveAnnouncement">保存公告</button>',
+        onMount: (root, close) => {
+          root.querySelector('#saveAnnouncement').addEventListener('click', async () => {
+            const text = root.querySelector('#annText').value.trim();
+            if (!text) { toast('公告正文不能为空', 'warn'); return; }
+            try {
+              await api.post('/api/admin/announcement', {
+                title: root.querySelector('#annTitle').value.trim() || '全站公告',
+                text,
+                link: root.querySelector('#annLink').value.trim()
+              });
+              close();
+              toast('公告已更新', 'success');
+              state.home = await api.get('/api/forum/home');
+              render();
+            } catch (error) { toast(error.message, 'error'); }
+          });
+        }
+      });
+    });
   }
 
   function bindQuickActions(root) {

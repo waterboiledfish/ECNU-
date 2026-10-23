@@ -2,10 +2,13 @@
 from __future__ import annotations
 
 import json
+import time
+from datetime import timedelta
 from typing import Any
 
 from ..db import db
 from ..security import anonymous_name, avatar_url
+from ..timeutil import iso, now_utc
 from .notify import push
 
 TAGS = [
@@ -43,18 +46,167 @@ def resolve_board(board: str | None, tags: list[str]) -> str:
     return "life"
 
 
-def board_counts() -> list[dict[str, Any]]:
+BOARD_COUNTS_TTL = 20.0
+_BOARD_COUNTS: dict[str, Any] = {"at": 0.0, "rows": None}
+
+# 旧帖子的 board 为空：按标签推导，和列表筛选的口径保持一致
+_BOARD_OF_POST_SQL = """
+CASE
+    WHEN board != '' THEN board
+    WHEN tags LIKE '%"经验分享"%' THEN 'exam'
+    WHEN tags LIKE '%"学习交流"%' THEN 'study'
+    WHEN tags LIKE '%"寻物启事"%' THEN 'lost'
+    WHEN tags LIKE '%"生活分享"%' THEN 'life'
+    ELSE 'life'
+END
+"""
+
+
+def board_counts(force: bool = False) -> list[dict[str, Any]]:
+    """版面帖子数：20 秒缓存，发帖/删帖时主动失效。"""
+    now = time.monotonic()
+    cached = _BOARD_COUNTS["rows"]
+    if cached is not None and not force and now - _BOARD_COUNTS["at"] < BOARD_COUNTS_TTL:
+        return [dict(item) for item in cached]
     counts: dict[str, int] = {}
     with db() as conn:
         rows = conn.execute(
-            "SELECT board, COUNT(*) AS n FROM posts WHERE status = 'visible' GROUP BY board"
+            f"SELECT {_BOARD_OF_POST_SQL} AS board_key, COUNT(*) AS n FROM posts "
+            "WHERE status = 'visible' GROUP BY board_key"
         ).fetchall()
         for row in rows:
-            counts[row["board"] or ""] = int(row["n"])
-    result = []
-    for item in BOARDS:
-        result.append({**item, "count": counts.get(item["key"], 0)})
-    return result
+            counts[row["board_key"] or ""] = int(row["n"])
+    result = [{**item, "count": counts.get(item["key"], 0)} for item in BOARDS]
+    _BOARD_COUNTS["rows"] = result
+    _BOARD_COUNTS["at"] = now
+    return [dict(item) for item in result]
+
+
+def invalidate_board_counts() -> None:
+    _BOARD_COUNTS["at"] = 0.0
+
+
+# ------------------------------------------------------------ 全站公告
+ANNOUNCEMENT_KEY = "forum_announcement"
+DEFAULT_ANNOUNCEMENT = {
+    "title": "全站公告",
+    "text": "欢迎来到 ECNU 小助手校园论坛：请遵守社区规范，友善讨论；广告、人身攻击与隐私泄露会被折叠或删除。",
+    "link": "",
+    "updated_at": "",
+}
+
+
+def get_announcement() -> dict[str, Any]:
+    with db() as conn:
+        row = conn.execute("SELECT value FROM meta WHERE key = ?", (ANNOUNCEMENT_KEY,)).fetchone()
+    if not row:
+        return dict(DEFAULT_ANNOUNCEMENT)
+    try:
+        data = json.loads(row["value"])
+    except (TypeError, json.JSONDecodeError):
+        return dict(DEFAULT_ANNOUNCEMENT)
+    if not isinstance(data, dict):
+        return dict(DEFAULT_ANNOUNCEMENT)
+    return {
+        "title": str(data.get("title") or DEFAULT_ANNOUNCEMENT["title"])[:20],
+        "text": str(data.get("text") or DEFAULT_ANNOUNCEMENT["text"])[:300],
+        "link": str(data.get("link") or "")[:300],
+        "updated_at": str(data.get("updated_at") or ""),
+    }
+
+
+def set_announcement(text: str, link: str = "", title: str = "全站公告") -> dict[str, Any]:
+    payload = {
+        "title": (title or "全站公告").strip()[:20] or "全站公告",
+        "text": text.strip()[:300],
+        "link": link.strip()[:300],
+        "updated_at": iso(now_utc()),
+    }
+    with db() as conn:
+        conn.execute(
+            "INSERT INTO meta (key, value) VALUES (?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (ANNOUNCEMENT_KEY, json.dumps(payload, ensure_ascii=False)),
+        )
+    return payload
+
+
+# ------------------------------------------------------------ 论坛首页
+HOME_WINDOW_DAYS = 30
+HOME_HOT_SCORE_SQL = (
+    "(SELECT COUNT(*) FROM post_likes pl WHERE pl.post_id = p.id) * 3 + "
+    "(SELECT COUNT(*) FROM comments c WHERE c.post_id = p.id AND c.status = 'visible') * 2 + "
+    "p.views * 0.02"
+)
+
+
+def _mark(conn, rows, viewer_id: int, is_admin: bool) -> list[dict[str, Any]]:
+    items = []
+    for row in rows:
+        item = serialize_post(conn, row, viewer_id, is_admin)
+        item["score"] = round(float(row["score"] or 0), 1)
+        items.append(item)
+    return items
+
+
+def home(viewer_id: int, is_admin: bool = False) -> dict[str, Any]:
+    """论坛首页聚合：全站公告 + 轮播（热度前 4）+ 推荐阅读（其后 5 条）+ 站点统计。"""
+    since = iso(now_utc() - timedelta(days=HOME_WINDOW_DAYS))
+    day_ago = iso(now_utc() - timedelta(days=1))
+    with db() as conn:
+        hot_rows = conn.execute(
+            f"SELECT p.*, {HOME_HOT_SCORE_SQL} AS score FROM posts p "
+            "WHERE p.status = 'visible' AND p.created_at >= ? "
+            "ORDER BY score DESC, p.created_at DESC LIMIT 4",
+            (since,),
+        ).fetchall()
+        # 冷启动（几乎没有互动）时用最新帖子补位，轮播不会空着
+        if len(hot_rows) < 3:
+            taken = [int(row["id"]) for row in hot_rows]
+            spots = 3 - len(hot_rows)
+            extra = conn.execute(
+                "SELECT p.*, 0 AS score FROM posts p WHERE p.status = 'visible' "
+                + (f"AND p.id NOT IN ({','.join('?' * len(taken))}) " if taken else "")
+                + "ORDER BY p.created_at DESC LIMIT ?",
+                (*taken, spots),
+            ).fetchall()
+            hot_rows = list(hot_rows) + list(extra)
+        hot_ids = [int(row["id"]) for row in hot_rows]
+        reco_rows = conn.execute(
+            f"SELECT p.*, {HOME_HOT_SCORE_SQL} AS score FROM posts p "
+            "WHERE p.status = 'visible' AND p.created_at >= ? "
+            + (f"AND p.id NOT IN ({','.join('?' * len(hot_ids))}) " if hot_ids else "")
+            + "ORDER BY score DESC, p.created_at DESC LIMIT 5",
+            (since, *hot_ids),
+        ).fetchall()
+        stats = {
+            "posts": int(
+                conn.execute(
+                    "SELECT COUNT(*) AS n FROM posts WHERE status = 'visible'"
+                ).fetchone()["n"]
+            ),
+            "today_posts": int(
+                conn.execute(
+                    "SELECT COUNT(*) AS n FROM posts WHERE status = 'visible' AND created_at >= ?",
+                    (day_ago,),
+                ).fetchone()["n"]
+            ),
+            "comments": int(
+                conn.execute(
+                    "SELECT COUNT(*) AS n FROM comments WHERE status = 'visible'"
+                ).fetchone()["n"]
+            ),
+            "users": int(conn.execute("SELECT COUNT(*) AS n FROM users").fetchone()["n"]),
+        }
+        carousel = _mark(conn, hot_rows, viewer_id, is_admin)
+        recommended = _mark(conn, reco_rows, viewer_id, is_admin)
+    return {
+        "announcement": get_announcement(),
+        "carousel": carousel,
+        "recommended": recommended,
+        "stats": stats,
+        "window_days": HOME_WINDOW_DAYS,
+    }
 
 
 def parse_tags(raw: str | None) -> list[str]:

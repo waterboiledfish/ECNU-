@@ -55,6 +55,13 @@ class SecurityHeadersMiddleware:
                 path = scope.get("path", "")
                 if path.startswith("/api/") and not path.startswith("/api/media/"):
                     headers.append((b"cache-control", b"no-store"))
+                elif path.startswith("/static/"):
+                    # 前端没有构建哈希：脚本与样式必须每次协商，否则浏览器会按启发式缓存用旧版本
+                    suffix = path.rsplit(".", 1)[-1].lower()
+                    if suffix in {"js", "css", "html", "json"}:
+                        headers.append((b"cache-control", b"no-cache"))
+                    else:
+                        headers.append((b"cache-control", b"public, max-age=86400"))
                 headers.extend(
                     [
                         (b"x-content-type-options", b"nosniff"),

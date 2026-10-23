@@ -9,6 +9,44 @@ python -m app
 
 默认只监听 `127.0.0.1:8765`，不会暴露到局域网。数据在 `~/.ecnu-assistant`（可用 `ECNU_DATA_DIR` 修改）。
 
+## 让同学从别的电脑 / 手机访问（局域网）
+
+最省事的方式是加 `--lan`：
+
+```bash
+python -m app --lan          # 等同 --host 0.0.0.0
+```
+
+启动时会打印所有可访问地址：
+
+```
+ECNU 小助手 1.0.9
+  · http://127.0.0.1:8765
+  · http://192.168.1.23:8765
+  （Ctrl+C 停止）
+```
+
+- 同学连同一个 Wi-Fi，在浏览器打开局域网地址即可；手机也能用，界面已适配窄屏；
+- Windows 首次会弹出防火墙询问，选「允许专用网络」；如果当时点了取消，可到「Windows 安全中心 → 防火墙 → 允许应用通过防火墙」里补上；
+- 换端口：`python -m app --lan --port 9000`，或用 `ECNU_HOST` / `ECNU_PORT` 环境变量；
+- 「个人设置 → 访问方式」里也能看到这些地址，一键复制发给同学。
+
+> 演示登录模式下，能访问该地址的人都能自己注册账号。只在你信任的网络（宿舍、实验室）里开放；不要把 `0.0.0.0` 直接映射到公网。
+
+## 放到公网：三种做法
+
+1. **云服务器 + 反向代理（推荐）**：按下面的 systemd / Docker 部署，Nginx 或 Caddy 负责 HTTPS，应用只监听 `127.0.0.1`。
+2. **内网穿透（家宽没有公网 IP）**：Cloudflare Tunnel、Tailscale Funnel 或 frp。临时演示可以 `cloudflared tunnel --url http://127.0.0.1:8765`，会得到一个临时 https 域名；链接是公开的，演示完及时关闭。
+3. **私有网络（最安全）**：Tailscale / ZeroTier 组网，同学装客户端后用它给的 `100.x` 地址访问，不暴露到公网。
+
+公网部署前至少确认：
+
+- 全站 HTTPS，`ECNU_COOKIE_SECURE=true`；
+- 关闭演示登录（接入 CAS / OIDC，或至少 `ECNU_DEV_LOGIN_ENABLED=false`）；
+- 设置 `ECNU_ADMIN_SUBJECTS`，只给必要的人管理员；
+- `ECNU_ALLOW_USER_CRAWL=false`，避免被当成爬虫入口；
+- 反向代理限制 `/api/docs`，并确认 SSE 不缓冲。
+
 ## 生产环境配置
 
 复制 `.env.example` 为 `.env`，至少修改：

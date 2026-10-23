@@ -306,8 +306,7 @@ export async function renderStudy(el, ctx) {
       </div>
       <div id="studyProfile"></div>
       <div id="studyLive"></div>
-      <div id="studyList">${loadingBlock('正在准备推荐…')}</div>
-      <div id="studyPapers"></div>
+      <div id="studyList">${skeleton()}</div>      <div id="studyPapers"></div>
       <p class="tiny muted">平台搜索链接由关键词生成，具体内容由平台提供；请遵守各平台规则与版权要求，优先使用正版课程与开放获取论文。</p>
     </div>`;
   }
@@ -320,10 +319,22 @@ export async function renderStudy(el, ctx) {
     });
   }
 
+  function skeleton() {
+    return `<div class="stack">
+      <div class="skeleton" style="height:26px;width:180px"></div>
+      <div class="grid grid-2">
+        <div class="skeleton" style="height:118px"></div>
+        <div class="skeleton" style="height:118px"></div>
+        <div class="skeleton" style="height:118px"></div>
+        <div class="skeleton" style="height:118px"></div>
+      </div>
+    </div>`;
+  }
+
   async function load(refresh) {
     const box = el.querySelector('#studyList');
     if (!box) return;
-    box.innerHTML = loadingBlock('正在准备推荐…');
+    box.innerHTML = skeleton();
     try {
       data = await api.get(`/api/study?${refresh ? 'refresh=1' : ''}`);
       render();

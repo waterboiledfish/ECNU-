@@ -94,7 +94,7 @@ export async function renderSources(el, ctx) {
     const items = payload.items || [];
     return `<section class="card pad-sm">
       <div class="flex-between wrap">
-        <div class="small strong">${icon('star')} 重点通知 · ${topics.map(esc).join(' / ')}</div>
+        <div class="small strong">${icon('star')} 猜你想看：</div>
         <span class="tiny muted">已入库 ${items.length} 篇</span>
       </div>
       ${items.length
@@ -103,7 +103,7 @@ export async function renderSources(el, ctx) {
             <span class="live-title">${esc(doc.title)}</span>
             <span class="live-meta">${esc(doc.site_name)}${doc.published_at ? ` · ${esc(String(doc.published_at).slice(0, 10))}` : ''}${icon('external')}</span>
           </a>`).join('')}</div>`
-        : `<p class="tiny muted mt-10">还没有抓到重点通知。点右上角「重点扫描」：只挑「保研 / 推免 / 复试 / 招生」这类正文入库，比整站采集快很多。</p>`}
+        : `<p class="tiny muted mt-10">还没有猜到你想要的通知。点右上角「重点扫描」，系统会优先把「${topics.slice(0, 3).map(esc).join(' / ')}」这类内容找出来。</p>`}
     </section>`;
   }
 

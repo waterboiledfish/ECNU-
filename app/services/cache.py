@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 from typing import Any
 
 from ..db import db
@@ -24,7 +25,11 @@ def get(key: str, ttl_seconds: int | None = None) -> Any | None:
 
 
 def get_stale(key: str) -> Any | None:
-    return get(key, ttl_seconds=None)
+    """读取可能过期的旧缓存；数据库未就绪时按「没有缓存」处理，不打断主流程。"""
+    try:
+        return get(key, ttl_seconds=None)
+    except sqlite3.Error:
+        return None
 
 
 def set(key: str, value: Any) -> None:  # noqa: A001 - 与 Python 内置同名但在本模块语义清晰

@@ -46,6 +46,14 @@ python -m app
 
 打开 <http://127.0.0.1:8765>。
 
+想让同一局域网的同学 / 手机也能用：
+
+```bash
+python -m app --lan
+```
+
+启动时会打印局域网地址（形如 `http://192.168.1.23:8765`），详见 [部署说明](docs/DEPLOYMENT.md#让同学从别的电脑--手机访问局域网)。
+
 - 默认是 **本地演示登录**（`ECNU_AUTH_MODE=dev`），方便没有学校 SSO 配置时体验。
 - 生产环境请切换为 `cas` 或 `oidc`，并完成学校审批与回调登记，见 [SSO 接入](docs/SSO.md)。
 - 首次进入是空文件库。到「官网文件」选择站点采集后，官网问答才会有依据。采集遵守 robots.txt 并限速；部分学院站点会拦截自动化请求（403 / TLS），应用会记录失败并保留官网链接，不会编造内容。
@@ -75,7 +83,7 @@ python -m app
 - 文档解析：BeautifulSoup（HTML）、pypdf（PDF）、标准库 zipfile（DOCX）。
 - 任务：后台 asyncio 调度器，跨进程重启后自动补发近期提醒。
 - AI：任何 OpenAI 兼容 `/chat/completions` 接口；流式解析 SSE。
-- 测试：pytest + FastAPI TestClient；109 个用例，默认不访问外部网络。
+- 测试：pytest + FastAPI TestClient；118 个用例，默认不访问外部网络。
 
 ## 目录
 

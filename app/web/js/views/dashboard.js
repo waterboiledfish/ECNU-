@@ -54,10 +54,10 @@ export async function renderDashboard(el) {
     </section>
 
     <div class="stat-row">
-      <div class="stat"><div class="label">待办提醒</div><div class="value">${data.reminders.total}</div><div class="hint">今天 ${data.reminders.today} 项 · 逾期 ${data.reminders.overdue} 项</div></div>
-      <div class="stat"><div class="label">进行中计划</div><div class="value">${planTotal}</div><div class="hint">今日完成 ${planDone} 个</div></div>
-      <div class="stat"><div class="label">未读消息</div><div class="value">${unread}</div><div class="hint">通知 ${data.unread.notifications} · 私信 ${data.unread.messages}</div></div>
-      <div class="stat"><div class="label">官网文件库</div><div class="value">${library.documents || 0}</div><div class="hint">${library.crawled_sites || 0}/${library.sites || 0} 个站点已有内容</div></div>
+      <div class="stat"><div class="stat-icon">${icon('bell')}</div><div class="label">待办提醒</div><div class="value">${data.reminders.total}</div><div class="hint">今天 ${data.reminders.today} 项 · 逾期 ${data.reminders.overdue} 项</div></div>
+      <div class="stat"><div class="stat-icon">${icon('calendar')}</div><div class="label">进行中计划</div><div class="value">${planTotal}</div><div class="hint">今日完成 ${planDone} 个</div></div>
+      <div class="stat"><div class="stat-icon">${icon('inbox')}</div><div class="label">未读消息</div><div class="value">${unread}</div><div class="hint">通知 ${data.unread.notifications} · 私信 ${data.unread.messages}</div></div>
+      <div class="stat"><div class="stat-icon">${icon('database')}</div><div class="label">官网文件库</div><div class="value">${library.documents || 0}</div><div class="hint">${library.crawled_sites || 0}/${library.sites || 0} 个站点已有内容</div></div>
     </div>
 
     <div class="grid grid-main-side">

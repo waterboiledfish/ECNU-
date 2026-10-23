@@ -230,6 +230,7 @@ export async function renderProfile(el, ctx) {
   const user = profileData.user;
   store.user = { ...store.user, ...user };
   const meta = store.meta || {};
+  const access = meta.access || { urls: [], lan_enabled: false, public_base_url: '' };
   const academics = (meta.academics && meta.academics.departments) || [];
   const majorOptions = (departmentName) => {
     const hit = academics.find((item) => item.name === departmentName);
@@ -345,6 +346,36 @@ export async function renderProfile(el, ctx) {
         </section>
 
         <section class="card pad">
+          <div class="section-title">${icon('globe')} 访问方式</div>
+          <div class="settings-list">
+            <div class="settings-row">
+              <div><div class="s-label">本机地址</div><div class="s-desc">在这台电脑的浏览器里打开就是它。</div></div>
+              <div class="flex">
+                <span class="tag tag-navy mono">${esc(access.urls?.[0] || '')}</span>
+                <button class="btn btn-xs btn-ghost" type="button" data-copy="${esc(access.urls?.[0] || '')}">${icon('copy')}复制</button>
+              </div>
+            </div>
+            ${access.lan_enabled
+              ? (access.urls || []).slice(1).map((url) => `<div class="settings-row">
+                  <div><div class="s-label">局域网地址</div><div class="s-desc">连同一个 Wi-Fi 的同学，可以在浏览器里直接打开它。</div></div>
+                  <div class="flex">
+                    <span class="tag tag-teal mono">${esc(url)}</span>
+                    <button class="btn btn-xs btn-ghost" type="button" data-copy="${esc(url)}">${icon('copy')}复制</button>
+                  </div>
+                </div>`).join('')
+              : `<div class="settings-row">
+                  <div><div class="s-label">局域网共享</div><div class="s-desc">当前只监听本机。在项目目录运行 <span class="mono">python -m app --lan</span>（或设置 <span class="mono">ECNU_HOST=0.0.0.0</span>），同一局域网的同学即可访问；首次运行 Windows 会询问是否允许防火墙。</div></div>
+                </div>`}
+            ${access.public_base_url && access.public_base_url !== access.urls?.[0]
+              ? `<div class="settings-row">
+                  <div><div class="s-label">对外地址</div><div class="s-desc">部署到服务器或反向代理时配置的公开地址（ECNU_PUBLIC_BASE_URL）。</div></div>
+                  <span class="tag tag-teal mono">${esc(access.public_base_url)}</span>
+                </div>`
+              : ''}
+          </div>
+        </section>
+
+        <section class="card pad">
           <div class="section-title">${icon('key')} 模型与隐私</div>
           <div class="settings-list">
             <div class="settings-row">
@@ -406,6 +437,19 @@ export async function renderProfile(el, ctx) {
   el.querySelector('#notifyPermission').addEventListener('click', async () => {
     const ok = await requestNotifyPermission();
     toast(ok ? '浏览器通知已开启' : '未获得通知权限', ok ? 'success' : 'warn');
+  });
+
+  el.querySelectorAll('[data-copy]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      const text = button.getAttribute('data-copy') || '';
+      if (!text) return;
+      try {
+        await navigator.clipboard.writeText(text);
+        toast('已复制访问地址', 'success');
+      } catch (error) {
+        toast(text, 'info', 8000);
+      }
+    });
   });
 
   el.querySelector('#clearKey').addEventListener('click', async () => {

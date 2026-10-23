@@ -199,10 +199,15 @@ def main() -> int:
             f'当前 {age.get("value")} 天',
         ) else 1
         if age["exists"]:
+            original_age = age.get("value")
             page.select_option("#ageSelect", "365")
             page.wait_for_timeout(1800)
             value = page.evaluate("() => document.querySelector('#ageSelect')?.value")
             failures += 0 if check("切换收录范围会保存", value == "365", f'现在 {value}') else 1
+            # 检查完复原，避免把真实数据窗口改成一年
+            if original_age and str(original_age) != "365":
+                page.select_option("#ageSelect", str(original_age))
+                page.wait_for_timeout(1200)
 
         # ------------------------------------------------------- 官网目录加载
         page.evaluate("() => { location.hash = '#/tasks' }")
@@ -266,6 +271,74 @@ def main() -> int:
         page.wait_for_timeout(1200)
         active = page.evaluate("() => Boolean(document.querySelector('#forumBoards .chip.active'))")
         failures += 0 if check("切换版面与时间后列表仍可用", active) else 1
+
+        # ------------------------------------------------------- 论坛首页模块
+        seeded_posts = page.evaluate(
+            """async () => {
+              const me = await fetch('/api/auth/me', { credentials: 'same-origin' }).then((r) => r.json());
+              const headers = { 'Content-Type': 'application/json', 'X-CSRF-Token': me.csrf };
+              const ids = [];
+              for (let i = 1; i <= 5; i += 1) {
+                const response = await fetch('/api/forum/posts', {
+                  method: 'POST', credentials: 'same-origin', headers,
+                  body: JSON.stringify({
+                    title: '流程检查·第 ' + i + ' 条经验分享',
+                    body: '这是一条用于检查论坛首页模块的示例帖子，包含保研与选课的经验。',
+                    tags: ['经验分享'], board: 'exam'
+                  })
+                });
+                if (!response.ok) return { ok: false, status: response.status };
+                ids.push((await response.json()).post.id);
+              }
+              return { ok: true, ids };
+            }"""
+        )
+        failures += 0 if check(
+            "论坛示例帖子写入成功", bool(seeded_posts.get("ok")), str(seeded_posts)[:60],
+        ) else 1
+        page.evaluate("() => { location.hash = '#/tasks' }")
+        page.wait_for_timeout(400)
+        page.evaluate("() => { location.hash = '#/forum' }")
+        page.wait_for_timeout(1800)
+        home = page.evaluate(
+            """() => ({
+              announcement: Boolean(document.querySelector('.forum-announce-text')),
+              slides: document.querySelectorAll('#forumCarousel .carousel-slide').length,
+              dots: document.querySelectorAll('#forumCarousel .carousel-dot').length,
+              recommended: document.querySelectorAll('.reco-row').length
+            })"""
+        )
+        failures += 0 if check("论坛首页显示全站公告", home["announcement"]) else 1
+        failures += 0 if check(
+            "论坛首页有轮播且切换点与条目一致",
+            home["slides"] >= 3 and home["dots"] == home["slides"],
+            f'{home["slides"]} 条 / {home["dots"]} 个点',
+        ) else 1
+        failures += 0 if check(
+            "论坛首页有推荐阅读", home["recommended"] >= 1, f'{home["recommended"]} 条',
+        ) else 1
+        switched = page.evaluate(
+            """() => {
+              const dots = document.querySelectorAll('#forumCarousel .carousel-dot');
+              if (dots.length < 2) return false;
+              dots[1].click();
+              return document.querySelectorAll('#forumCarousel .carousel-slide')[1]?.classList.contains('active') === true;
+            }"""
+        )
+        failures += 0 if check("轮播可以手动切换", switched) else 1
+        page.wait_for_timeout(700)  # 等切换动画结束再截图
+        page.screenshot(path=os.path.join(shots, "flows-forum-home.png"))
+        page.evaluate(
+            """async (ids) => {
+              const me = await fetch('/api/auth/me', { credentials: 'same-origin' }).then((r) => r.json());
+              const headers = { 'X-CSRF-Token': me.csrf };
+              for (const id of ids) {
+                await fetch('/api/forum/posts/' + id, { method: 'DELETE', credentials: 'same-origin', headers });
+              }
+              return true;
+            }""",
+            seeded_posts.get("ids") or [],
+        )
 
         # ------------------------------------------------------- 计划词库选择
         page.evaluate("() => { location.hash = '#/plans' }")

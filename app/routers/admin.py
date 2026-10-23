@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 
 from ..db import db
 from ..security import avatar_url, get_current_user
-from ..services.forum import post_link
+from ..services.forum import invalidate_board_counts, post_link, set_announcement
 from ..services.notify import push
 from ..timeutil import iso, now_utc
 
@@ -35,6 +35,12 @@ class ReportResolve(BaseModel):
 class AppealResolve(BaseModel):
     action: Literal["accept", "reject"]
     reply: str = Field(default="", max_length=500)
+
+
+class AnnouncementIn(BaseModel):
+    text: str = Field(min_length=1, max_length=300)
+    link: str = Field(default="", max_length=300)
+    title: str = Field(default="全站公告", max_length=20)
 
 
 def _audit(conn, actor_id: int, action: str, target: str, detail: dict) -> None:
@@ -80,6 +86,15 @@ def overview(admin: dict = Depends(_admin)):
                 else None
             ),
         }
+
+
+@router.post("/announcement")
+def update_announcement(payload: AnnouncementIn, admin: dict = Depends(_admin)):
+    """更新论坛首页的「全站公告」。"""
+    announcement = set_announcement(payload.text, payload.link, payload.title)
+    with db() as conn:
+        _audit(conn, admin["id"], "forum.announcement", "forum", payload.model_dump())
+    return {"announcement": announcement, "message": "公告已更新"}
 
 
 @router.get("/moderation")
@@ -209,6 +224,8 @@ def moderate(
             }
             push(conn, int(author_id), "moderation", {"text": text_map[payload.action], "link": link})
         _audit(conn, admin["id"], f"moderation.{payload.action}", f"{kind}:{target_id}", payload.model_dump())
+    if is_post:
+        invalidate_board_counts()
     return {"ok": True, "status": new_status}
 
 
@@ -315,6 +332,7 @@ def resolve_report(report_id: int, payload: ReportResolve, admin: dict = Depends
             if action_text:
                 push(conn, int(target_author), "moderation", {"text": action_text, "link": link or "#/forum"})
         _audit(conn, admin["id"], "report.resolve", f"report:{report_id}", payload.model_dump())
+    invalidate_board_counts()
     return {"ok": True}
 
 
@@ -387,6 +405,7 @@ def resolve_appeal(appeal_id: int, payload: AppealResolve, admin: dict = Depends
         )
         push(conn, int(appeal["user_id"]), "appeal", {"text": text, "link": "#/forum"})
         _audit(conn, admin["id"], f"appeal.{payload.action}", f"appeal:{appeal_id}", payload.model_dump())
+    invalidate_board_counts()
     return {"ok": True}
 
 

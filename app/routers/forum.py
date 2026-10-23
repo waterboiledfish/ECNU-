@@ -103,6 +103,12 @@ def list_boards():
     return {"boards": forum_service.board_counts()}
 
 
+@router.get("/home")
+def forum_home(user: dict = Depends(get_current_user)):
+    """论坛首页：全站公告、轮播、推荐阅读与站点统计。"""
+    return forum_service.home(user["id"], user["role"] == "admin")
+
+
 @router.get("/posts")
 def list_posts(
     tag: str = "",
@@ -230,6 +236,7 @@ def create_post(
         post = forum_service.serialize_post(conn, row, user["id"], user["role"] == "admin")
     if settings.moderation_api_key and status != "hidden":
         background.add_task(forum_service.ai_review_post, post_id)
+    forum_service.invalidate_board_counts()
     return {"post": post, "message": STATUS_MESSAGES[status]}
 
 
@@ -302,6 +309,7 @@ def update_post(
         post = forum_service.serialize_post(conn, row, user["id"], user["role"] == "admin")
     if settings.moderation_api_key and status != "hidden":
         background.add_task(forum_service.ai_review_post, post_id)
+    forum_service.invalidate_board_counts()
     return {"post": post, "message": STATUS_MESSAGES[status]}
 
 
@@ -314,6 +322,7 @@ def delete_post(post_id: int, user: dict = Depends(get_current_user)):
         if row["author_id"] != user["id"] and user["role"] != "admin":
             raise HTTPException(status_code=403, detail="只能删除自己的帖子")
         conn.execute("UPDATE posts SET status = 'removed' WHERE id = ?", (post_id,))
+    forum_service.invalidate_board_counts()
     return {"ok": True}
 
 
