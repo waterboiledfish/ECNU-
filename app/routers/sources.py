@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 from ..config import settings
 from ..db import bump_index_version, db
 from ..security import client_ip, enforce_rate, get_current_user
-from ..services import extract, index, recency
+from ..services import extract, index, priority, recency
 from ..services.crawler import CrawlManager, crawl_manager
 from ..timeutil import iso, now_utc
 
@@ -19,6 +19,8 @@ router = APIRouter(prefix="/api/sources", tags=["sources"])
 
 class CrawlIn(BaseModel):
     site_ids: list[int] = Field(default_factory=list, max_length=60)
+    # 重点扫描：只抓「保研 / 推免 / 复试」等重点正文
+    focus: bool = False
 
 
 class ImportIn(BaseModel):
@@ -72,6 +74,8 @@ def list_sources(user: dict = Depends(get_current_user)):
                 "pages_failed": last["pages_failed"],
                 "skipped_old": int(detail.get("skipped_old", 0) or 0),
                 "skipped_fresh": int(detail.get("skipped_fresh", 0) or 0),
+                "priority_hits": int(detail.get("priority_hits", 0) or 0),
+                "focus": bool(detail.get("focus", False)),
                 "errors": detail.get("errors", [])[-8:],
             }
     return {
@@ -84,8 +88,26 @@ def list_sources(user: dict = Depends(get_current_user)):
         "can_crawl": _crawl_allowed(user),
         "max_age_days": recency.max_age_days(),
         "age_choices": list(recency.CHOICES),
+        "priority_topics": priority.topics(),
         "portal_url": settings.portal_url,
     }
+
+
+@router.get("/priority")
+def priority_documents(limit: int = 12, user: dict = Depends(get_current_user)):
+    """已经入库的重点通知（保研 / 推免 / 复试 …），让用户不用自己翻列表。"""
+    topics = priority.topics()
+    like = " OR ".join("d.title LIKE ?" for _ in topics)
+    params: list[object] = [f"%{topic}%" for topic in topics]
+    params.append(max(1, min(limit, 50)))
+    with db() as conn:
+        rows = conn.execute(
+            "SELECT d.id, d.title, d.url, d.published_at, d.fetched_at, d.char_count, "
+            "s.name AS site_name FROM documents d JOIN sites s ON s.id = d.site_id "
+            f"WHERE ({like}) ORDER BY COALESCE(d.published_at, d.fetched_at) DESC LIMIT ?",
+            tuple(params),
+        ).fetchall()
+    return {"topics": topics, "items": [dict(row) for row in rows]}
 
 
 @router.patch("/settings")
@@ -227,7 +249,7 @@ def start_crawl(payload: CrawlIn, request: Request, user: dict = Depends(get_cur
         raise HTTPException(status_code=403, detail="当前部署仅管理员可以触发采集")
     enforce_rate(request, "crawl", 10, 3600)
     try:
-        status = crawl_manager.start(payload.site_ids, user["id"])
+        status = crawl_manager.start(payload.site_ids, user["id"], focus=payload.focus)
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from None
     with db() as conn:

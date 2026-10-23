@@ -161,7 +161,7 @@ class Settings:
 
     # 常量
     app_name: str = "ECNU 小助手"
-    version: str = "1.0.7"
+    version: str = "1.0.8"
     max_body_bytes: int = 1_200_000
     session_ttl_days: int = 30
     max_upload_bytes: int = 600_000

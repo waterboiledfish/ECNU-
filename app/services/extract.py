@@ -57,6 +57,12 @@ def normalize_url(base: str, href: str) -> str | None:
     href = href.strip()
     if href.startswith(("javascript:", "mailto:", "tel:", "#")):
         return None
+    # 有些站点把整段 HTML 塞进 href（例如 <a href="<a href=...>"），这种链接必然 404
+    if any(char in href for char in "<> \t\n"):
+        return None
+    # 有些站点把邮箱写成 href="name@domain"（没写 mailto:），别当页面去抓
+    if "@" in href and not href.lower().startswith(("http://", "https://", "//")):
+        return None
     absolute = urljoin(base, href)
     parsed = urlparse(absolute)
     if parsed.scheme not in {"http", "https"} or not parsed.hostname:
@@ -294,15 +300,18 @@ def html_to_content(data: bytes, url: str, charset: str = "utf-8") -> dict:
     if not published:
         published = parse_date(text[:2000])
     links: list[str] = []
+    link_items: list[dict[str, str]] = []
     for anchor in soup.find_all("a", href=True):
         absolute = normalize_url(url, anchor["href"])
         if absolute and absolute not in links:
             links.append(absolute)
+            link_items.append({"url": absolute, "text": anchor.get_text(" ", strip=True)[:120]})
     return {
         "title": title[:200] or urlparse(url).path,
         "text": text[:200_000],
         "published_at": published,
         "links": links[:400],
+        "link_items": link_items[:400],
         "kind": "html",
     }
 

@@ -5,12 +5,18 @@ import { icon, esc, toast, openModal, loadingBlock, emptyState, fmtDateTime, saf
 export async function renderSources(el, ctx) {
   el.innerHTML = loadingBlock('正在读取官网目录…');
   let data = null;
+  let priorityData = null;
   let selected = new Set();
   let query = '';
   let pollTimer = null;
 
   const load = async () => {
-    data = await api.get('/api/sources');
+    const [sources, priorityList] = await Promise.all([
+      api.get('/api/sources'),
+      api.get('/api/sources/priority?limit=10').catch(() => null)
+    ]);
+    data = sources;
+    priorityData = priorityList;
     render();
     if (data.crawl && data.crawl.running) startPolling();
   };
@@ -42,6 +48,7 @@ export async function renderSources(el, ctx) {
       <div class="page-head">
         <div><h2>官网文件</h2><p>采集学校官网公开页面与 PDF，建立本地检索库。回答会附上原文链接、来源站点与发布日期。</p></div>
         <div class="page-head-actions">
+          <button class="btn btn-ghost" id="priorityScan" type="button" ${data.can_crawl ? '' : 'disabled'}>${icon('star')}重点扫描</button>
           <button class="btn btn-ghost" id="importDoc" type="button" ${data.can_crawl ? '' : 'disabled'}>${icon('link')}导入链接</button>
           <a class="btn btn-ghost" href="#/ask">${icon('sparkles')}去提问</a>
           <button class="btn btn-primary" id="crawlSelected" type="button" ${data.can_crawl ? '' : 'disabled'}>${icon('download')}采集所选</button>
@@ -55,6 +62,7 @@ export async function renderSources(el, ctx) {
         <div class="stat"><div class="label">采集状态</div><div class="value" style="font-size:19px">${crawl.running ? '进行中' : '空闲'}</div><div class="hint">${crawl.message || '按需采集，遵守 robots.txt'}</div></div>
       </div>
       ${crawlPanel(crawl)}
+      ${priorityPanel(priorityData)}
       ${agePanel(data)}
       ${lastRunPanel(data.last_run)}
       <div class="card pad-sm">
@@ -80,12 +88,31 @@ export async function renderSources(el, ctx) {
     bind();
   }
 
+  function priorityPanel(payload) {
+    if (!payload) return '';
+    const topics = payload.topics || [];
+    const items = payload.items || [];
+    return `<section class="card pad-sm">
+      <div class="flex-between wrap">
+        <div class="small strong">${icon('star')} 重点通知 · ${topics.map(esc).join(' / ')}</div>
+        <span class="tiny muted">已入库 ${items.length} 篇</span>
+      </div>
+      ${items.length
+        ? `<div class="stack-6 mt-10">${items.map((doc) => `
+          <a class="live-item" href="${safeHttpUrl(doc.url)}" target="_blank" rel="noopener noreferrer">
+            <span class="live-title">${esc(doc.title)}</span>
+            <span class="live-meta">${esc(doc.site_name)}${doc.published_at ? ` · ${esc(String(doc.published_at).slice(0, 10))}` : ''}${icon('external')}</span>
+          </a>`).join('')}</div>`
+        : `<p class="tiny muted mt-10">还没有抓到重点通知。点右上角「重点扫描」：只挑「保研 / 推免 / 复试 / 招生」这类正文入库，比整站采集快很多。</p>`}
+    </section>`;
+  }
+
   function crawlPanel(crawl) {
     if (crawl.running) {
       return `<section class="card pad-sm crawl-panel">
         <div class="flex-between"><div class="small strong">${icon('refresh')} ${esc(crawl.message || '正在采集…')}</div>
           ${store.user?.is_admin ? '<button class="btn btn-xs btn-ghost" id="cancelCrawl" type="button">停止</button>' : ''}</div>
-        <div class="crawl-progress">成功 ${crawl.pages_ok || 0} 页 · 失败 ${crawl.pages_failed || 0} 页 · 队列 ${crawl.queued || 0}</div>
+        <div class="crawl-progress">成功 ${crawl.pages_ok || 0} 页 · 失败 ${crawl.pages_failed || 0} 页${crawl.pages_priority ? ` · 重点 ${crawl.pages_priority} 篇` : ''} · 队列 ${crawl.queued || 0}</div>
         <div class="progress"><span style="width:${Math.min(95, ((crawl.pages_ok + crawl.pages_failed) / Math.max(1, (crawl.site_total || 1) * 30)) * 100)}%"></span></div>
         ${(crawl.errors || []).length ? `<div class="crawl-error">${crawl.errors.slice(-3).map(esc).join('<br>')}</div>` : ''}
       </section>`;
@@ -118,12 +145,15 @@ export async function renderSources(el, ctx) {
     const bad = lastRun.pages_failed || 0;
     const old = lastRun.skipped_old || 0;
     const fresh = lastRun.skipped_fresh || 0;
-    const status = lastRun.status === 'running' ? '进行中' : (bad ? '部分失败' : '已完成');
+    const hits = lastRun.priority_hits || 0;
+    const status = lastRun.status === 'running'
+      ? '进行中'
+      : (lastRun.focus ? '重点扫描完成' : (bad ? '部分失败' : '已完成'));
     const errors = (lastRun.errors || []).filter(Boolean).slice(-3);
     return `<section class="card pad-sm">
       <div class="flex-between"><div class="small strong">${icon('clock')} 最近一次采集 · ${esc(status)}</div>
         <span class="tiny muted">${lastRun.finished_at ? esc(fmtDateTime(lastRun.finished_at)) : ''}</span></div>
-      <div class="tiny muted mt-6">成功 ${ok} 页 · 失败 ${bad} 页${old ? ` · 跳过 ${old} 篇超出收录范围` : ''}${fresh ? ` · 跳过 ${fresh} 篇已抓过` : ''}${lastRun.started_at ? ` · 开始于 ${esc(fmtDateTime(lastRun.started_at))}` : ''}</div>
+      <div class="tiny muted mt-6">成功 ${ok} 页 · 失败 ${bad} 页${hits ? ` · 重点通知 ${hits} 篇` : ''}${old ? ` · 跳过 ${old} 篇超出收录范围` : ''}${fresh ? ` · 跳过 ${fresh} 篇已抓过` : ''}${lastRun.started_at ? ` · 开始于 ${esc(fmtDateTime(lastRun.started_at))}` : ''}</div>
       ${errors.length ? `<div class="crawl-error mt-6">${errors.map(esc).join('<br>')}</div>` : ''}
       ${bad ? '<div class="tiny muted mt-6">失败的站点会保留官网链接，可点「导入链接」单独补充具体文件。</div>' : ''}
       ${fresh ? '<div class="tiny muted mt-6">已抓过的正文不再重复抓，再点一次「采集」会继续往里抓新页面。</div>' : ''}
@@ -199,6 +229,13 @@ export async function renderSources(el, ctx) {
     el.querySelectorAll('[data-crawl]').forEach((button) => {
       button.addEventListener('click', () => startCrawl([Number(button.getAttribute('data-crawl'))]));
     });
+    el.querySelector('#priorityScan')?.addEventListener('click', () => {
+      const ids = selected.size
+        ? Array.from(selected).map(Number)
+        : (data.sites || []).map((site) => site.id);
+      startCrawl(ids, true);
+      toast(`正在扫描 ${ids.length} 个站点的重点正文`, 'info', 4000);
+    });
     el.querySelector('#importDoc')?.addEventListener('click', openImport);
     el.querySelector('#ageSelect')?.addEventListener('change', async (event) => {
       const days = Number(event.target.value) || 0;
@@ -219,10 +256,16 @@ export async function renderSources(el, ctx) {
     });
   }
 
-  async function startCrawl(siteIds) {
+  async function startCrawl(siteIds, focus = false) {
     try {
-      await api.post('/api/sources/crawl', { site_ids: siteIds });
-      toast('采集已开始，可以离开此页，任务会在后台继续', 'success', 5000);
+      await api.post('/api/sources/crawl', { site_ids: siteIds, focus });
+      toast(
+        focus
+          ? '重点扫描已开始：只抓保研 / 推免 / 复试等重点正文，可以离开此页'
+          : '采集已开始，可以离开此页，任务会在后台继续',
+        'success',
+        5000
+      );
       await load();
     } catch (error) { toast(error.message, 'error'); }
   }
