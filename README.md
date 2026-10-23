@@ -157,7 +157,7 @@ python -m ruff check app tests scripts
 可选的前端检查（需要本机 Edge 与 Playwright）：
 
 ```bash
-python -m pip install playwright
+python -m pip install -r requirements-ui.txt
 python scripts/ui_check.py      # 登录并逐页截图到 .ui-shots/
 python scripts/ui_interact.py   # 实际操作待办/计划/论坛/后台
 python scripts/ui_chat_mock.py  # 用本地 mock 模型验证流式问答等
