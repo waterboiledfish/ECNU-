@@ -9,6 +9,7 @@ from __future__ import annotations
 import html
 import re
 import threading
+import time
 from datetime import UTC, datetime
 from typing import Any
 
@@ -28,6 +29,13 @@ ARTICLE_URL = "https://www.bilibili.com/read/cv{}"
 _SESSION: requests.Session | None = None
 _LOCK = threading.Lock()
 _TAG_RE = re.compile(r"<[^>]+>")
+# 触发风控后暂停一段时间，避免继续加重；期间直接回退到检索链接
+_COOLDOWN = {"until": 0.0, "last_call": 0.0}
+MIN_INTERVAL = 0.8
+
+
+class BiliBlocked(Exception):
+    pass
 
 
 def _clean(text: str) -> str:
@@ -62,15 +70,34 @@ def _count_label(value: int) -> str:
 
 
 def _search(kind: str, keyword: str, limit: int) -> list[dict[str, Any]]:
+    now = time.time()
+    if now < _COOLDOWN["until"]:
+        raise BiliBlocked("cooling down")
+    with _LOCK:
+        wait = MIN_INTERVAL - (time.time() - _COOLDOWN["last_call"])
+        if wait > 0:
+            time.sleep(wait)
+        _COOLDOWN["last_call"] = time.time()
     params = {"search_type": kind, "keyword": keyword, "page": 1, "order": "click"}
-    response = _session().get(
-        SEARCH_URL,
-        params=params,
-        headers={"Referer": "https://search.bilibili.com/"},
-        timeout=10,
-    )
+    try:
+        response = _session().get(
+            SEARCH_URL,
+            params=params,
+            headers={"Referer": "https://search.bilibili.com/"},
+            timeout=10,
+        )
+    except requests.RequestException as exc:
+        raise BiliBlocked(str(exc)) from None
+    if response.status_code == 412:
+        # B 站风控：停 10 分钟，期间直接给检索链接
+        _COOLDOWN["until"] = time.time() + 600
+        raise BiliBlocked("412 risk control")
     response.raise_for_status()
     payload = response.json()
+    if payload.get("code") not in (0, None):
+        if "412" in str(payload.get("message", "")):
+            _COOLDOWN["until"] = time.time() + 600
+        raise BiliBlocked(str(payload.get("message")))
     rows = ((payload.get("data") or {}).get("result")) or []
     items: list[dict[str, Any]] = []
     for row in rows:
@@ -119,7 +146,7 @@ def queries_for(user: dict) -> list[str]:
     queries += [f"{direction} 入门" for direction in directions]
     if not queries:
         queries = ["大学学习方法"]
-    return queries[:3]
+    return queries[:2]
 
 
 def _fallback(queries: list[str]) -> dict[str, Any]:
@@ -148,13 +175,18 @@ def recommend(user: dict, refresh: bool = False) -> dict[str, Any]:
 
     videos: list[dict[str, Any]] = []
     docs: list[dict[str, Any]] = []
+    blocked = False
     for query in queries:
         try:
             videos.extend(_search("video", query, 4))
+        except BiliBlocked:
+            blocked = True
         except (requests.RequestException, ValueError):
             pass
         try:
             docs.extend(_search("article", query, 3))
+        except BiliBlocked:
+            blocked = True
         except (requests.RequestException, ValueError):
             pass
 
@@ -175,11 +207,25 @@ def recommend(user: dict, refresh: bool = False) -> dict[str, Any]:
         "videos": dedupe(videos, 6),
         "docs": dedupe(docs, 4),
         "queries": queries,
+        "searches": [
+            {
+                "query": query,
+                "url": f"https://search.bilibili.com/all?keyword={requests.utils.quote(query)}",
+            }
+            for query in queries
+        ],
+        "blocked": blocked,
         "mode": "live",
         "generated_at": datetime.now(UTC).isoformat(timespec="seconds"),
         "note": "视频与专栏按公开播放/浏览量排序，链接直达 B 站；内容由平台提供，请遵守平台规则。",
     }
     if not payload["videos"] and not payload["docs"]:
         payload.update(_fallback(queries))
-    cache.set(key, payload)
+        if blocked:
+            payload["note"] = (
+                "B 站暂时触发了访问风控，先给出站内检索链接；过几分钟再点「换一批」就能看到具体视频。"
+            )
+    # 只有拿到真实条目才写缓存，风控/失败时下次可以重试
+    if payload["videos"] and payload["mode"] == "live":
+        cache.set(key, payload)
     return {**payload, "cached": False}

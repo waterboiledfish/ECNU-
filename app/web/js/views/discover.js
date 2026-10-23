@@ -161,6 +161,10 @@ export async function renderNews(el, ctx) {
       return;
     }
     if (!digest) { slot.innerHTML = ''; return; }
+    if (!digest.digest || !String(digest.digest).trim()) {
+      slot.innerHTML = `<div class="notice notice-warn">${icon('alert')}<div>模型这次没有返回摘要内容（推理模型容易出现）。请再点一次「生成今日摘要」，或在设置里换成普通对话模型。</div></div>`;
+      return;
+    }
     slot.innerHTML = `<section class="card pad">
       <div class="section-title">${icon('sparkles')} AI 今日摘要 <span class="spacer"></span><button class="link-btn" id="closeDigest">收起</button></div>
       <div class="digest-box md">${renderMarkdown(digest.digest)}</div>
@@ -353,7 +357,11 @@ export async function renderStudy(el, ctx) {
             <span class="live-meta">${esc(item.count_label || '')}${item.author ? ` · ${esc(item.author)}` : ''}${icon('external')}</span>
           </a>`).join('')}
         </div>`).join('')}
+        ${(live.searches || []).length ? `<div class="flex wrap mt-12" style="gap:8px">
+          ${live.searches.map((item) => `<a class="btn btn-xs btn-ghost" href="${safeHttpUrl(item.url)}" target="_blank" rel="noopener noreferrer">${icon('search')}在 B 站搜「${esc(item.query)}」</a>`).join('')}
+        </div>` : ''}
         <p class="tiny muted mt-12">${esc(live.note || '链接直达平台，内容由平台提供。')}</p>
+        <p class="tiny muted mt-6">如果打开 B 站提示 412，是 B 站的风控（不是应用出错），稍等几分钟或点上面的搜索链接即可。</p>
       </section>`;
     } else {
       liveBox.innerHTML = '';

@@ -77,7 +77,7 @@ def list_sources(user: dict = Depends(get_current_user)):
         "sites": sites,
         "categories": [{"name": name, "sites": items} for name, items in categories.items()],
         "documents": int(doc_total),
-        "index": index.stats(),
+        "index": index.stats(fast=True),
         "crawl": crawl_manager.status(),
         "last_run": last_run,
         "can_crawl": _crawl_allowed(user),

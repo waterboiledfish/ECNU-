@@ -68,6 +68,24 @@ def _map_status(status: int) -> str:
     return f"模型服务返回错误（HTTP {status}）"
 
 
+def _message_text(message: dict) -> str:
+    """取出正文；推理模型（deepseek-r1 / qwen-thinking 等）只给 reasoning_content 时退回思考内容。
+
+    这类模型如果只返回思考过程、content 为空，前端会看到「空回答」，
+    所以这里明确兜底，并在两者都为空时给出可操作的报错。
+    """
+    for field in ("content", "reasoning_content", "reasoning"):
+        value = message.get(field)
+        if isinstance(value, list):  # 少数兼容层返回分段数组
+            value = "".join(
+                str(part.get("text", "")) if isinstance(part, dict) else str(part)
+                for part in value
+            )
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
+
+
 def chat(
     messages: Sequence[dict[str, str]],
     *,
@@ -105,12 +123,16 @@ def chat(
         raise LLMError(_map_status(response.status_code), response.status_code)
     try:
         data = response.json()
-        content = data["choices"][0]["message"]["content"]
+        message = data["choices"][0]["message"]
     except (ValueError, KeyError, IndexError, TypeError):
         raise LLMError("模型返回内容无法解析") from None
-    if not isinstance(content, str) or not content.strip():
-        raise LLMError("模型返回了空内容，请重试")
-    return content.strip()
+    content = _message_text(message if isinstance(message, dict) else {})
+    if not content:
+        raise LLMError(
+            "模型返回了空内容：如果用的是推理模型（如 deepseek-reasoner），"
+            "请换成普通对话模型（如 deepseek-chat、gpt-4.1-mini）后重试"
+        )
+    return content
 
 
 def stream_chat(

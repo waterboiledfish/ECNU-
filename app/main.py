@@ -33,7 +33,7 @@ from .routers import (
     study,
 )
 from .security import CSRFMiddleware, get_current_user
-from .services import scheduler
+from .services import index, scheduler
 from .services.events import hub
 from .timeutil import now_iso
 
@@ -106,6 +106,8 @@ async def lifespan(app: FastAPI):
     init_db()
     hub.bind_loop(asyncio.get_running_loop())
     scheduler.start()
+    # 后台预热检索索引：语料大时不把首页请求卡住
+    index.warmup_async()
     logger.info(
         "ECNU 小助手 %s 已启动 · 登录模式=%s · 数据目录=%s",
         __version__,

@@ -108,15 +108,60 @@ def invalidate() -> None:
         _CACHE["built_at"] = 0.0
 
 
-def stats() -> dict[str, int]:
-    cache = build_index()
+def stats(fast: bool = False) -> dict[str, Any]:
+    """索引统计。
+
+    fast=True 时绝不在请求线程里建索引：返回上一次的统计并触发后台预热，
+    避免「官网文件」页面因为语料大而转圈。检索（search）仍然按需构建。
+    """
+    version = get_meta("index_version", "0")
+    fresh = _CACHE["version"] == version and bool(_CACHE["built_at"])
+    if not fresh:
+        if fast:
+            warmup_async()
+            cache = _CACHE
+            if not cache["built_at"]:
+                return {
+                    "chunks": 0,
+                    "documents": 0,
+                    "terms": 0,
+                    "avg_chunk_tokens": 0,
+                    "building": True,
+                }
+        else:
+            cache = build_index()
+    else:
+        cache = _CACHE
     avg = (cache["total_len"] / cache["n"]) if cache["n"] else 0
     return {
         "chunks": int(cache["n"]),
         "documents": int(cache["doc_count"]),
         "terms": len(cache["postings"]),
         "avg_chunk_tokens": round(avg, 1),
+        "building": not fresh,
     }
+
+
+_WARM = {"running": False}
+
+
+def warmup_async() -> None:
+    """后台线程重建索引，不阻塞任何接口。"""
+    with _LOCK:
+        if _WARM["running"]:
+            return
+        _WARM["running"] = True
+
+    def worker() -> None:
+        try:
+            build_index(force=True)
+        except Exception:
+            pass
+        finally:
+            with _LOCK:
+                _WARM["running"] = False
+
+    threading.Thread(target=worker, name="index-warmup", daemon=True).start()
 
 
 def search(
