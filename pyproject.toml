@@ -1,0 +1,63 @@
+[project]
+name = "ecnu-assistant"
+version = "1.0.0"
+description = "面向华东师范大学学生的本地优先 AI 助手：官网文件问答、待办提醒、学习计划、论坛与推荐。"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "waterboiledfish" }]
+keywords = ["ecnu", "assistant", "rag", "fastapi", "campus"]
+dependencies = [
+    "fastapi>=0.115,<1",
+    "uvicorn>=0.30,<1",
+    "requests>=2.32,<3",
+    "beautifulsoup4>=4.12,<5",
+    "pypdf>=5,<8",
+    "Pillow>=10.4,<13",
+    "tzdata>=2024.2",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.3,<10", "httpx>=0.27,<1", "ruff>=0.8"]
+ui = ["playwright>=1.48,<2"]
+
+[project.scripts]
+ecnu-assistant = "app.__main__:main"
+
+[project.urls]
+Homepage = "https://github.com/waterboiledfish/ECNU-"
+Repository = "https://github.com/waterboiledfish/ECNU-"
+Issues = "https://github.com/waterboiledfish/ECNU-/issues"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+
+[tool.setuptools.package-data]
+app = [
+    "schema.sql",
+    "data/*.json",
+    "web/index.html",
+    "web/favicon.svg",
+    "web/css/*.css",
+    "web/js/*.js",
+    "web/js/views/*.js",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+filterwarnings = ["ignore::DeprecationWarning"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+exclude = ["app/web", ".git", "__pycache__"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+# FastAPI 的 Depends(...) 默认参数是框架惯用写法
+ignore = ["E501", "B008"]

@@ -1,0 +1,5 @@
+# ECNU 小助手 · 开发与测试依赖
+# 安装：python -m pip install -r requirements-dev.txt
+-r requirements.txt
+pytest>=8.3,<10
+httpx>=0.27,<1

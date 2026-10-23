@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="color-scheme" content="light dark">
+  <meta name="description" content="ECNU 小助手：面向华东师范大学学生的本地优先 AI 助手，支持官网文件问答、待办提醒、学习计划、论文与热点推荐、校园论坛。">
+  <meta name="theme-color" content="#0b3a66">
+  <title>ECNU 小助手</title>
+  <link rel="icon" href="/favicon.ico" type="image/svg+xml">
+  <link rel="stylesheet" href="/static/css/app.css">
+</head>
+<body>
+  <div id="boot" class="boot-screen">
+    <div class="boot-card">
+      <div class="boot-logo">E</div>
+      <div>
+        <strong>ECNU 小助手</strong>
+        <p>正在准备你的校园工作台…</p>
+      </div>
+    </div>
+  </div>
+
+  <div id="app" class="app" hidden>
+    <div class="sidebar-backdrop" id="sidebarBackdrop"></div>
+    <aside class="sidebar" id="sidebar">
+      <a class="brand" href="#/">
+        <span class="brand-mark">E</span>
+        <span class="brand-text">
+          <strong>ECNU 小助手</strong>
+          <small>华东师大 · 学生工具</small>
+        </span>
+      </a>
+      <nav class="nav" id="mainNav" aria-label="主导航"></nav>
+      <div class="sidebar-footer">
+        <a class="portal-button" id="portalButton" href="https://portal2023.ecnu.edu.cn/portal/home" target="_blank" rel="noopener noreferrer">
+          <span class="portal-icon">DB</span>
+          <span><strong>公共数据库</strong><small>跳转到学校门户</small></span>
+        </a>
+        <a class="sidebar-user" id="sidebarUser" href="#/me"></a>
+        <p class="sidebar-note">非学校官方应用 · 数据保存在本机</p>
+      </div>
+    </aside>
+
+    <div class="workspace">
+      <header class="topbar">
+        <button class="icon-btn menu-btn" id="menuBtn" type="button" aria-label="打开菜单"></button>
+        <div class="topbar-title">
+          <span id="pageEyebrow">工作台</span>
+          <h1 id="pageTitle">今天</h1>
+        </div>
+        <div class="topbar-actions">
+          <a class="icon-btn" id="searchBtn" href="#/forum" aria-label="搜索" title="论坛搜索"></a>
+          <button class="icon-btn" id="themeBtn" type="button" aria-label="切换主题" title="切换主题"></button>
+          <a class="icon-btn bell" id="bellBtn" href="#/notifications" aria-label="通知">
+            <span class="bell-icon"></span><span class="dot" id="bellDot" hidden></span>
+          </a>
+          <button class="user-chip" id="userChip" type="button" aria-label="账号菜单"></button>
+        </div>
+      </header>
+      <main id="view" class="view" tabindex="-1"></main>
+    </div>
+  </div>
+
+  <nav class="mobile-nav" id="mobileNav" aria-label="移动端导航" hidden></nav>
+  <div id="toasts" class="toasts" role="status" aria-live="polite"></div>
+  <div id="modalRoot"></div>
+
+  <script type="module" src="/static/js/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,4 @@
+# 可选的浏览器端 UI 检查依赖
+# 安装：python -m pip install -r requirements-ui.txt
+# 使用系统 Edge：playwright.chromium.launch(channel="msedge")
+playwright>=1.48,<2

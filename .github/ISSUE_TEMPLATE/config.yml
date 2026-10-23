@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: 安全漏洞
+    url: https://github.com/waterboiledfish/ECNU-/security/advisories/new
+    about: 请勿公开披露安全问题，使用私人安全公告。
+  - name: 使用与部署文档
+    url: https://github.com/waterboiledfish/ECNU-/tree/main/docs
+    about: 先查看架构、SSO、隐私与部署说明。

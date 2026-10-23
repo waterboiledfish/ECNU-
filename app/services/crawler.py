@@ -1,0 +1,301 @@
+"""官网公开内容采集器：遵守 robots.txt，按域名限速，串行采集。"""
+from __future__ import annotations
+
+import hashlib
+import threading
+import time
+import urllib.robotparser
+from collections import deque
+from typing import Any
+from urllib.parse import urljoin, urlparse
+
+from ..config import settings
+from ..db import bump_index_version, db, jdumps, jloads
+from ..timeutil import now_iso
+from . import extract
+from .extract import FetchError
+
+
+class CrawlManager:
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._thread: threading.Thread | None = None
+        self._stop = threading.Event()
+        self._state: dict[str, Any] = {
+            "running": False,
+            "run_id": None,
+            "started_at": None,
+            "site": "",
+            "pages_ok": 0,
+            "pages_failed": 0,
+            "queued": 0,
+            "message": "空闲",
+            "errors": [],
+        }
+
+    # ------------------------------------------------------------ public
+    def start(self, site_ids: list[int], user_id: int | None = None) -> dict:
+        with self._lock:
+            if self._state["running"]:
+                raise RuntimeError("已有采集任务正在进行，请等待完成")
+            with db() as conn:
+                if site_ids:
+                    marks = ",".join("?" for _ in site_ids)
+                    rows = conn.execute(
+                        f"SELECT * FROM sites WHERE enabled = 1 AND id IN ({marks}) ORDER BY id",
+                        tuple(site_ids),
+                    ).fetchall()
+                else:
+                    rows = conn.execute(
+                        "SELECT * FROM sites WHERE enabled = 1 ORDER BY id LIMIT 3"
+                    ).fetchall()
+            sites = [dict(r) for r in rows]
+            if not sites:
+                raise RuntimeError("没有可采集的站点")
+            run_id = None
+            with db() as conn:
+                cur = conn.execute(
+                    "INSERT INTO crawl_runs (site_ids, status, started_at, detail) "
+                    "VALUES (?, 'running', ?, ?)",
+                    (jdumps([s["id"] for s in sites]), now_iso(), jdumps({"user_id": user_id})),
+                )
+                run_id = int(cur.lastrowid)
+            self._stop.clear()
+            self._state = {
+                "running": True,
+                "run_id": run_id,
+                "started_at": now_iso(),
+                "site": sites[0]["name"],
+                "pages_ok": 0,
+                "pages_failed": 0,
+                "queued": 0,
+                "site_total": len(sites),
+                "message": "准备采集",
+                "errors": [],
+            }
+            self._thread = threading.Thread(
+                target=self._run, args=(run_id, sites), name="ecnu-crawler", daemon=True
+            )
+            self._thread.start()
+            return self.status()
+
+    def status(self) -> dict:
+        with self._lock:
+            return {**self._state, "errors": list(self._state.get("errors", []))[-10:]}
+
+    def cancel(self) -> dict:
+        self._stop.set()
+        with self._lock:
+            self._state["message"] = "正在停止…"
+        return self.status()
+
+    # ------------------------------------------------------------ worker
+    def _run(self, run_id: int, sites: list[dict]) -> None:
+        total_ok = 0
+        total_failed = 0
+        errors: list[str] = []
+        try:
+            for index, site in enumerate(sites, start=1):
+                if self._stop.is_set():
+                    break
+                with self._lock:
+                    self._state["site"] = f"{site['name']}（{index}/{len(sites)}）"
+                    self._state["message"] = "读取 robots.txt"
+                ok, failed, site_errors = self._crawl_site(site)
+                total_ok += ok
+                total_failed += failed
+                errors.extend(site_errors)
+                with self._lock:
+                    self._state["pages_ok"] = total_ok
+                    self._state["pages_failed"] = total_failed
+                    self._state["errors"] = errors[-30:]
+                with db() as conn:
+                    conn.execute(
+                        "UPDATE sites SET last_crawled_at = ?, doc_count = "
+                        "(SELECT COUNT(*) FROM documents WHERE site_id = ?) WHERE id = ?",
+                        (now_iso(), site["id"], site["id"]),
+                    )
+                time.sleep(1.0)
+            bump_index_version()
+            status = "cancelled" if self._stop.is_set() else "finished"
+        except Exception as exc:  # 采集线程兜底：记录错误而不是让进程崩溃
+            errors.append(f"采集器异常：{exc.__class__.__name__}")
+            status = "failed"
+        finally:
+            with db() as conn:
+                conn.execute(
+                    "UPDATE crawl_runs SET status = ?, finished_at = ?, pages_ok = ?, "
+                    "pages_failed = ?, detail = ? WHERE id = ?",
+                    (
+                        status,
+                        now_iso(),
+                        total_ok,
+                        total_failed,
+                        jdumps({"errors": errors[-30:]}),
+                        run_id,
+                    ),
+                )
+                conn.execute(
+                    "UPDATE sites SET doc_count = (SELECT COUNT(*) FROM documents WHERE site_id = sites.id)"
+                )
+            with self._lock:
+                self._state["running"] = False
+                self._state["message"] = {
+                    "finished": f"采集完成：成功 {total_ok} 页，失败 {total_failed} 页",
+                    "cancelled": "已停止采集",
+                    "failed": "采集失败，请查看错误记录",
+                }[status]
+                self._state["pages_ok"] = total_ok
+                self._state["pages_failed"] = total_failed
+                self._state["errors"] = errors[-30:]
+
+    def _crawl_site(self, site: dict) -> tuple[int, int, list[str]]:
+        base = site["url"]
+        robots = self._load_robots(base)
+        queue: deque[tuple[str, int]] = deque([(base, 0)])
+        visited: set[str] = set()
+        ok = 0
+        failed = 0
+        errors: list[str] = []
+        max_pages = max(1, settings.crawl_max_pages_per_site)
+        while queue and ok + failed < max_pages and not self._stop.is_set():
+            url, depth = queue.popleft()
+            if url in visited:
+                continue
+            visited.add(url)
+            if robots is not None and not robots.can_fetch(settings.user_agent, url):
+                continue
+            with self._lock:
+                self._state["queued"] = len(queue)
+                self._state["message"] = f"正在采集：{urlparse(url).netloc}{urlparse(url).path[:40]}"
+            time.sleep(max(0.2, settings.crawl_delay_seconds))
+            try:
+                result = extract.fetch(url)
+            except FetchError as exc:
+                failed += 1
+                if len(errors) < 20:
+                    errors.append(f"{url} · {exc}")
+                continue
+            try:
+                content = extract.extract(
+                    result["url"], result["content_type"], result["data"], result.get("charset", "utf-8")
+                )
+            except FetchError as exc:
+                failed += 1
+                if len(errors) < 20:
+                    errors.append(f"{result['url']} · {exc}")
+                continue
+            if len(content["text"]) < 60:
+                failed += 1
+                continue
+            with db() as conn:
+                changed = self._save_document(conn, int(site["id"]), result["url"], content)
+            if changed:
+                ok += 1
+            else:
+                failed += 1  # 未变化：计入跳过
+            if depth < settings.crawl_max_depth:
+                for link in content.get("links", []):
+                    if (
+                        link not in visited
+                        and len(queue) < 600
+                        and extract.host_allowed(link, settings.crawl_allowed_suffixes)
+                        and self._same_site(link, base)
+                        and not self._skip_url(link)
+                    ):
+                        queue.append((link, depth + 1))
+        return ok, failed, errors
+
+    @staticmethod
+    def _same_site(url: str, base: str) -> bool:
+        host = (urlparse(url).hostname or "").lower()
+        base_host = (urlparse(base).hostname or "").lower()
+        return host == base_host or host.endswith("." + base_host)
+
+    @staticmethod
+    def _skip_url(url: str) -> bool:
+        path = urlparse(url).path.lower()
+        query = urlparse(url).query.lower()
+        blocked = ("logout", "login", "signin", "search", "print", "rss", "feed")
+        return any(token in path for token in blocked) or "searchword" in query
+
+    @staticmethod
+    def _load_robots(base: str) -> urllib.robotparser.RobotFileParser | None:
+        robots_url = urljoin(base, "/robots.txt")
+        parser = urllib.robotparser.RobotFileParser()
+        try:
+            result = extract.fetch(robots_url, timeout=8, max_bytes=200_000)
+            text = result["data"].decode("utf-8", "ignore")
+            parser.parse(text.splitlines())
+            return parser
+        except FetchError:
+            parser.parse([])
+            return parser
+        except Exception:
+            return None
+
+    @staticmethod
+    def _save_document(conn, site_id: int, url: str, content: dict) -> bool:
+        text = content["text"]
+        sha = hashlib.sha256(text.encode("utf-8")).hexdigest()
+        existing = conn.execute("SELECT id, sha256 FROM documents WHERE url = ?", (url,)).fetchone()
+        if existing and existing["sha256"] == sha:
+            return False
+        title = (content.get("title") or url).strip()[:200]
+        published = content.get("published_at")
+        now = now_iso()
+        if existing:
+            doc_id = int(existing["id"])
+            conn.execute(
+                "UPDATE documents SET title = ?, published_at = ?, fetched_at = ?, content_type = ?, "
+                "sha256 = ?, text = ?, char_count = ? WHERE id = ?",
+                (
+                    title,
+                    published,
+                    now,
+                    content.get("kind", "html"),
+                    sha,
+                    text,
+                    len(text),
+                    doc_id,
+                ),
+            )
+            conn.execute("DELETE FROM chunks WHERE document_id = ?", (doc_id,))
+        else:
+            cur = conn.execute(
+                "INSERT INTO documents (site_id, url, title, published_at, fetched_at, content_type, "
+                "sha256, text, char_count) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    site_id,
+                    url,
+                    title,
+                    published,
+                    now,
+                    content.get("kind", "html"),
+                    sha,
+                    text,
+                    len(text),
+                ),
+            )
+            doc_id = int(cur.lastrowid)
+        chunks = extract.chunk_text(text)
+        conn.executemany(
+            "INSERT INTO chunks (document_id, ordinal, text) VALUES (?, ?, ?)",
+            [(doc_id, i, chunk) for i, chunk in enumerate(chunks)],
+        )
+        return True
+
+    def recent_runs(self, limit: int = 5) -> list[dict]:
+        with db() as conn:
+            rows = conn.execute(
+                "SELECT * FROM crawl_runs ORDER BY id DESC LIMIT ?", (limit,)
+            ).fetchall()
+        result = []
+        for row in rows:
+            item = dict(row)
+            item["detail"] = jloads(item.get("detail"), {})
+            result.append(item)
+        return result
+
+
+crawl_manager = CrawlManager()

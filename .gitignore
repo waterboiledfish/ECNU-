@@ -1,5 +1,40 @@
-__pycache__/
-*.pyc
+# 应用数据与私密配置
 .env
-.venv/
+.env.*
+!.env.example
+data/
 *.db
+*.db-wal
+*.db-shm
+*.sqlite3
+.ecnu-assistant/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+build/
+dist/
+
+# 前端与编辑器
+node_modules/
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.log
+
+# 本地演示 / 测试 / 浏览器检查产物
+.demo-data/
+.test-*/
+.ui-shots/
+.ui-profile/
+.dsh/
+.dsh-project-memory/
+HANDOVER.md

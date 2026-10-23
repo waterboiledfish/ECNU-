@@ -1,0 +1,18 @@
+cff-version: 1.2.0
+message: "如果在本项目基础上开展研究或课程项目，请引用本仓库。"
+title: "ECNU 小助手"
+abstract: "面向华东师范大学学生的本地优先 AI 助手：官网文件问答、待办提醒、定期计划、论文与热点推荐、校园论坛。"
+type: software
+authors:
+  - name: "waterboiledfish and contributors"
+repository-code: "https://github.com/waterboiledfish/ECNU-"
+url: "https://github.com/waterboiledfish/ECNU-"
+license: MIT
+version: "1.0.0"
+date-released: "2026-10-23"
+keywords:
+  - ECNU
+  - campus assistant
+  - RAG
+  - FastAPI
+  - student tools
