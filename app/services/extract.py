@@ -207,10 +207,24 @@ def _clean_text(text: str) -> str:
     return "\n".join(output).strip()
 
 
+_DECLARED_CHARSET = re.compile(rb"charset\s*=\s*[\"']?([\w-]+)", re.I)
+# 这些编码永远不会解码失败，但会产出乱码：不能直接信
+_WEAK_CHARSETS = {"", "iso-8859-1", "latin-1", "latin1", "ascii", "us-ascii"}
+
+
 def _decode(data: bytes, charset: str) -> str:
-    for encoding in (charset, "utf-8", "gb18030", "gbk"):
+    declared = (charset or "").strip().lower()
+    if declared in _WEAK_CHARSETS:
+        # HTTP 头没写 charset 时 requests 会给 ISO-8859-1，此时以页面 <meta charset> 为准
+        match = _DECLARED_CHARSET.search(data[:4096])
+        if match:
+            candidate = match.group(1).decode("ascii", "ignore").strip().lower()
+            if candidate and candidate not in _WEAK_CHARSETS:
+                declared = candidate
+    order = [declared] if declared and declared not in _WEAK_CHARSETS else []
+    for encoding in [*order, "utf-8", "gb18030", "gbk"]:
         try:
-            return data.decode(encoding or "utf-8")
+            return data.decode(encoding)
         except (LookupError, UnicodeDecodeError):
             continue
     return data.decode("utf-8", "ignore")

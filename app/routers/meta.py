@@ -30,6 +30,7 @@ def meta():
         "app": {"name": settings.app_name, "version": settings.version},
         "auth": auth_meta(),
         "portal_url": settings.portal_url,
+        "faculty_url": settings.faculty_url,
         "providers": _providers(),
         "defaults": {"base_url": settings.llm_base_url, "model": settings.llm_model},
         "grades": GRADES,

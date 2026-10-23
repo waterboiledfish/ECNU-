@@ -2,6 +2,60 @@
 from __future__ import annotations
 
 
+def test_decode_ignores_default_latin1():
+    """HTTP 头没有 charset 时 requests 给 ISO-8859-1，不能让正文变乱码。"""
+    from app.services.extract import _decode
+
+    utf8 = '<html><head><meta charset="utf-8"></head><body>推免生综合考核实施细则</body></html>'.encode()
+    assert "推免生综合考核实施细则" in _decode(utf8, "ISO-8859-1")
+
+    gbk = '<html><head><meta charset="gbk"></head><body>推免生综合考核实施细则</body></html>'.encode("gbk")
+    assert "推免生综合考核实施细则" in _decode(gbk, "ISO-8859-1")
+
+    # 明确声明 GBK 且字节确实是 GBK 时也要按声明解
+    assert "中文" in _decode("<p>中文</p>".encode("gbk"), "gbk")
+
+
+def test_mojibake_documents_are_marked_for_refetch(auth):
+    from app.db import _OLD_STAMP, _repair_mojibake, db
+    from app.timeutil import iso, now_utc
+
+    now = iso(now_utc())
+    with db() as conn:
+        site_id = conn.execute("SELECT id FROM sites ORDER BY id LIMIT 1").fetchone()["id"]
+        for title, text in [
+            ("乱码页", "å¤§å­¦æ»´æ°´æ¹–å½éè½¯ä»¶å¦é¢ æ­£æåå®¹"),
+            ("正常页", "华东师范大学软件工程学院 推免生综合考核实施细则"),
+        ]:
+            conn.execute(
+                "INSERT INTO documents (site_id, url, title, published_at, fetched_at, "
+                "content_type, sha256, text, char_count) VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?)",
+                (site_id, f"https://www.ecnu.edu.cn/{title}.html", title, now, "text/html", title, text, len(text)),
+            )
+        _repair_mojibake(conn)
+        rows = {
+            row["title"]: row["fetched_at"]
+            for row in conn.execute("SELECT title, fetched_at FROM documents WHERE title IN ('乱码页','正常页')")
+        }
+    assert rows["乱码页"] == _OLD_STAMP
+    assert rows["正常页"] == now
+
+
+def test_meta_exposes_faculty_and_catalogs(auth):
+    client = auth["client"]
+    meta = client.get("/api/meta").json()
+    assert meta["faculty_url"].startswith("https://faculty.ecnu.edu.cn")
+    names = {item["name"] for item in meta["academics"]["departments"]}
+    assert "创新创业学院" in names
+    assert len(names) >= 37
+
+    sites = client.get("/api/sources").json()["sites"]
+    by_name = {site["name"]: site for site in sites}
+    assert "创新创业学院" in by_name
+    assert by_name["创新创业学院"]["url"] == "https://sie.ecnu.edu.cn/"
+    assert len(sites) >= 44
+
+
 def test_clean_digest_strips_planning_text():
     from app.services.news import clean_digest
 

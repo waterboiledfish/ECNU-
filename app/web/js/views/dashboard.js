@@ -36,6 +36,7 @@ export async function renderDashboard(el) {
   const planTotal = data.plans.length || 0;
   const library = data.library || {};
   const portal = (store.meta && store.meta.portal_url) || 'https://portal2023.ecnu.edu.cn/portal/home';
+  const faculty = (store.meta && store.meta.faculty_url) || 'https://faculty.ecnu.edu.cn/';
 
   el.innerHTML = `<div class="view-page">
     <section class="card hero-card">
@@ -114,6 +115,11 @@ export async function renderDashboard(el) {
             <a class="list-item" href="${esc(portal)}" target="_blank" rel="noopener noreferrer">
               <span class="plan-icon" style="width:34px;height:34px;font-size:14px;background:var(--amber-100);color:#96620f">DB</span>
               <div class="grow"><div class="list-title">公共数据库</div><div class="list-meta">学校一站式门户</div></div>
+              ${icon('external')}
+            </a>
+            <a class="list-item" href="${esc(faculty)}" target="_blank" rel="noopener noreferrer">
+              <span class="plan-icon" style="width:34px;height:34px;font-size:14px;background:var(--teal-100);color:var(--teal-600)">师</span>
+              <div class="grow"><div class="list-title">教师主页</div><div class="list-meta">查找老师与导师主页</div></div>
               ${icon('external')}
             </a>
             <a class="list-item" href="#/papers">

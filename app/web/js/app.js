@@ -127,6 +127,8 @@ function renderShell() {
     ${icon('chevronDown')}`;
   const portal = document.getElementById('portalButton');
   portal.href = meta.portal_url || 'https://portal2023.ecnu.edu.cn/portal/home';
+  const faculty = document.getElementById('facultyButton');
+  if (faculty) faculty.href = meta.faculty_url || 'https://faculty.ecnu.edu.cn/';
   document.getElementById('menuBtn').innerHTML = icon('menu');
   document.getElementById('searchBtn').innerHTML = icon('search');
   const bellIcon = document.querySelector('#bellBtn .bell-icon');

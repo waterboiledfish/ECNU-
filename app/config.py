@@ -154,10 +154,14 @@ class Settings:
             "PORTAL_URL", "https://portal2023.ecnu.edu.cn/portal/home"
         )
     )
+    # 教师个人主页（侧栏「教师主页」通道）
+    faculty_url: str = field(
+        default_factory=lambda: _env("FACULTY_URL", "https://faculty.ecnu.edu.cn/")
+    )
 
     # 常量
     app_name: str = "ECNU 小助手"
-    version: str = "1.0.6"
+    version: str = "1.0.7"
     max_body_bytes: int = 1_200_000
     session_ttl_days: int = 30
     max_upload_bytes: int = 600_000

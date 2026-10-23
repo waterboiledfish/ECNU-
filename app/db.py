@@ -57,6 +57,35 @@ def _migrate(conn: sqlite3.Connection) -> None:
     post_columns = {row["name"] for row in conn.execute("PRAGMA table_info(posts)").fetchall()}
     if "board" not in post_columns:
         conn.execute("ALTER TABLE posts ADD COLUMN board TEXT NOT NULL DEFAULT ''")
+    _repair_mojibake(conn)
+
+
+# 1.0.6 及更早版本会把 UTF-8 网页按 ISO-8859-1 解码，落库成「Ã¤Â¸Â­」这种乱码
+_MOJIBAKE_CHARS = "ÃÂæåï¼â€¤¨"
+_OLD_STAMP = "1970-01-01T00:00:00+00:00"
+
+
+def _looks_mojibake(*texts: str) -> bool:
+    joined = " ".join(text or "" for text in texts)
+    return sum(joined.count(char) for char in _MOJIBAKE_CHARS) >= 5
+
+
+def _repair_mojibake(conn: sqlite3.Connection) -> None:
+    """把乱码正文标记为需要重新抓取（fetched_at 置旧，采集器就不会跳过它）。"""
+    try:
+        columns = {row["name"] for row in conn.execute("PRAGMA table_info(documents)").fetchall()}
+        if "fetched_at" not in columns:
+            return
+        rows = conn.execute(
+            "SELECT id, title, substr(text, 1, 2000) AS sample FROM documents "
+            "WHERE fetched_at > ?",
+            (_OLD_STAMP,),
+        ).fetchall()
+    except sqlite3.Error:
+        return
+    stale = [int(row["id"]) for row in rows if _looks_mojibake(row["title"], row["sample"])]
+    for doc_id in stale:
+        conn.execute("UPDATE documents SET fetched_at = ? WHERE id = ?", (_OLD_STAMP, doc_id))
 
 
 def _seed_sites(conn: sqlite3.Connection) -> None:
