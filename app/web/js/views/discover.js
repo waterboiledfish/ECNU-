@@ -50,7 +50,9 @@ export async function renderNews(el, ctx) {
     { key: 'general', label: '综合' }, { key: 'tech', label: '科技' }, { key: 'finance', label: '金融' }
   ];
   const preferred = store.user?.settings?.news_categories || [];
+  const myTopics = (store.user?.settings?.news_topics || []).filter(Boolean);
   let active = preferred.find((key) => categories.some((item) => item.key === key)) || categories[0].key;
+  let activeTopic = null;
   let feed = null;
   let digest = null;
   let digestLoading = false;
@@ -74,6 +76,14 @@ export async function renderNews(el, ctx) {
         </div>
         <span class="tiny muted" id="newsMeta"></span>
       </div>
+      <div class="toolbar">
+        <span class="tiny muted">我的话题</span>
+        <div class="chip-row" id="newsTopics">
+          ${myTopics.length
+            ? myTopics.map((topic) => `<button class="chip" type="button" data-topic="${esc(topic)}">${esc(topic)}</button>`).join('')
+            : '<span class="tiny muted">还没有自定义话题，到 <a href="#/me">个人设置</a> 添加，例如「AI」「考研」。</span>'}
+        </div>
+      </div>
       <div id="digestSlot"></div>
       <div class="card pad-sm" id="newsList">${loadingBlock('正在获取热点…')}</div>
       <p class="tiny muted">热点内容来自第三方媒体，转载与引用请遵循原媒体版权规定；AI 摘要仅作辅助。</p>
@@ -85,8 +95,20 @@ export async function renderNews(el, ctx) {
       const button = event.target.closest('[data-cat]');
       if (!button) return;
       active = button.getAttribute('data-cat');
+      activeTopic = null;
       digest = null;
       el.querySelectorAll('#newsTabs .tab').forEach((tab) => tab.classList.toggle('active', tab.getAttribute('data-cat') === active));
+      el.querySelectorAll('#newsTopics .chip').forEach((chip) => chip.classList.remove('active'));
+      renderDigest();
+      load(false);
+    });
+    el.querySelector('#newsTopics').addEventListener('click', (event) => {
+      const button = event.target.closest('[data-topic]');
+      if (!button) return;
+      activeTopic = button.getAttribute('data-topic');
+      digest = null;
+      el.querySelectorAll('#newsTopics .chip').forEach((chip) => chip.classList.toggle('active', chip === button));
+      el.querySelectorAll('#newsTabs .tab').forEach((tab) => tab.classList.remove('active'));
       renderDigest();
       load(false);
     });
@@ -97,9 +119,12 @@ export async function renderNews(el, ctx) {
   async function load(refresh) {
     const list = el.querySelector('#newsList');
     if (!list) return;
-    list.innerHTML = loadingBlock('正在获取热点…');
+    list.innerHTML = loadingBlock(activeTopic ? `正在查找「${activeTopic}」的话题热点…` : '正在获取热点…');
+    const suffix = refresh ? '&refresh=1' : '';
     try {
-      feed = await api.get(`/api/news?category=${encodeURIComponent(active)}${refresh ? '&refresh=1' : ''}`);
+      feed = activeTopic
+        ? await api.get(`/api/news/topic?topic=${encodeURIComponent(activeTopic)}${suffix}`)
+        : await api.get(`/api/news?category=${encodeURIComponent(active)}${suffix}`);
       renderList();
     } catch (error) {
       list.innerHTML = `<div class="notice notice-danger">${icon('alert')}<div>${esc(error.message)}</div></div>`;
@@ -159,7 +184,7 @@ export async function renderNews(el, ctx) {
     digestLoading = true;
     renderDigest();
     try {
-      digest = await api.post('/api/news/digest', { category: active });
+      digest = await api.post('/api/news/digest', activeTopic ? { topic: activeTopic } : { category: active });
       digestLoading = false;
       renderDigest();
     } catch (error) {
@@ -276,6 +301,7 @@ export async function renderStudy(el, ctx) {
         </div>
       </div>
       <div id="studyProfile"></div>
+      <div id="studyLive"></div>
       <div id="studyList">${loadingBlock('正在准备推荐…')}</div>
       <div id="studyPapers"></div>
       <p class="tiny muted">平台搜索链接由关键词生成，具体内容由平台提供；请遵守各平台规则与版权要求，优先使用正版课程与开放获取论文。</p>
@@ -308,6 +334,30 @@ export async function renderStudy(el, ctx) {
     const profile = el.querySelector('#studyProfile');
     const missing = !user.grade && !(user.courses || []).length && !(user.directions || []).length;
     profile.innerHTML = missing ? `<div class="notice notice-warn">${icon('alert')}<div>完善年级、课程和学习方向后，推荐会更贴合。当前使用通用推荐。<a href="#/me">去完善资料</a></div></div>` : '';
+
+    // 真实可点的视频 / 图文：按公开播放量、浏览量排序
+    const live = data.live || {};
+    const liveBox = el.querySelector('#studyLive');
+    const rows = [
+      { label: '视频', iconName: 'play', items: live.videos || [], hint: '按播放量排序' },
+      { label: '图文 / 专栏', iconName: 'note', items: live.docs || [], hint: '按浏览量排序' }
+    ].filter((row) => row.items.length);
+    if (rows.length) {
+      liveBox.innerHTML = `<section class="card pad">
+        <div class="section-title">${icon('sparkles')} 直接点开：${esc((data.live.queries || [])[0] || '相关推荐')}
+          <span class="spacer"></span><span class="tiny muted">${live.mode === 'live' ? '公开数据实时排序' : '站内检索'}</span></div>
+        ${rows.map((row) => `<div class="stack-6">
+          <div class="tiny muted" style="margin-top:8px">${icon(row.iconName)} ${row.label} · ${row.hint}</div>
+          ${row.items.map((item) => `<a class="live-item" href="${safeHttpUrl(item.url)}" target="_blank" rel="noopener noreferrer">
+            <span class="live-title">${esc(item.title)}</span>
+            <span class="live-meta">${esc(item.count_label || '')}${item.author ? ` · ${esc(item.author)}` : ''}${icon('external')}</span>
+          </a>`).join('')}
+        </div>`).join('')}
+        <p class="tiny muted mt-12">${esc(live.note || '链接直达平台，内容由平台提供。')}</p>
+      </section>`;
+    } else {
+      liveBox.innerHTML = '';
+    }
     const box = el.querySelector('#studyList');
     if (!data.items?.length) {
       box.innerHTML = emptyState({ iconName: 'book', title: '暂时没有推荐', desc: '稍后重试或完善个人资料。' });

@@ -37,6 +37,7 @@ def academics() -> dict:
 DEFAULT_SETTINGS = {
     "theme": "system",
     "news_categories": ["general", "tech", "finance"],
+    "news_topics": [],
     "notify_channels": ["inapp", "browser"],
     "show_grade": True,
     "compact": False,

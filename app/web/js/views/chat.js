@@ -20,19 +20,118 @@ const PROMPTS = {
   ]
 };
 
+/* 会话状态放在模块级：切到别的页面时流式输出继续跑，回到对话页还能接着看。 */
+const SESSIONS = {
+  official: {
+    mode: 'official', messages: [], threads: [], threadId: null, sending: false, controller: null,
+    view: null, library: null, selectedSites: new Set(), siteQuery: ''
+  },
+  academic: {
+    mode: 'academic', messages: [], threads: [], threadId: null, sending: false, controller: null,
+    view: null, library: null, selectedSites: new Set(), siteQuery: ''
+  }
+};
+
+function sessionFor(mode) {
+  return SESSIONS[mode === 'academic' ? 'academic' : 'official'];
+}
+
+function notify(mode) {
+  const session = sessionFor(mode);
+  const view = session.view;
+  if (!view) return;
+  if (!view.el || !view.el.isConnected) { session.view = null; return; }
+  try {
+    view.refresh();
+  } catch (error) {
+    /* 视图已经被路由替换，忽略 */
+  }
+}
+
+function sessionMessages(session) {
+  return session.messages
+    .filter((message) => message.content && String(message.content).trim())
+    .map((message) => ({
+      role: message.role,
+      content: message.content,
+      sources: message.sources || [],
+      insufficient: !!message.insufficient,
+      error: message.error || ''
+    }));
+}
+
+async function persistSession(session) {
+  const messages = sessionMessages(session);
+  if (!messages.length) return;
+  try {
+    if (!session.threadId) {
+      const created = await api.post('/api/chat/threads', { mode: session.mode });
+      session.threadId = Number(created.id);
+    }
+    await api.put(`/api/chat/threads/${session.threadId}`, { messages });
+    if (session.view && session.view.loadThreads) session.view.loadThreads();
+  } catch (error) {
+    /* 历史保存失败不影响当前对话 */
+  }
+}
+
+async function runChatStream(session, question, siteIds, history) {
+  const assistantIndex = session.messages.length - 1;
+  const controller = new AbortController();
+  session.sending = true;
+  session.controller = controller;
+  const path = session.mode === 'official' ? '/api/chat/official/stream' : '/api/chat/academic/stream';
+  try {
+    await streamRequest(path, { question, site_ids: siteIds, history }, (event) => {
+      const assistant = session.messages[assistantIndex];
+      if (!assistant) return;
+      if (event.type === 'sources') {
+        assistant.sources = event.sources || [];
+      } else if (event.type === 'delta') {
+        assistant.content += event.text || '';
+        notify(session.mode);
+      } else if (event.type === 'done') {
+        assistant.content = event.answer || assistant.content;
+        assistant.sources = event.sources || assistant.sources || [];
+        assistant.insufficient = !!event.insufficient;
+        assistant.streaming = false;
+        notify(session.mode);
+        persistSession(session);
+      } else if (event.type === 'error') {
+        assistant.error = event.detail || '回答失败，请稍后重试';
+        assistant.streaming = false;
+        notify(session.mode);
+        toast(assistant.error, 'error');
+        persistSession(session);
+      }
+    }, { signal: controller.signal });
+  } catch (error) {
+    const assistant = session.messages[assistantIndex];
+    if (assistant) {
+      assistant.streaming = false;
+      if (error && error.name === 'AbortError') {
+        assistant.content = assistant.content ? `${assistant.content}\n\n（已停止生成）` : '（已停止生成）';
+      } else {
+        assistant.error = error.message || '请求失败，请稍后重试';
+        toast(error.message || '请求失败', 'error');
+      }
+      notify(session.mode);
+      persistSession(session);
+    }
+  } finally {
+    if (session.controller === controller) session.controller = null;
+    session.sending = false;
+    notify(session.mode);
+  }
+}
+
+function stopSession(session) {
+  if (session.controller) session.controller.abort();
+}
+
 export async function renderChat(el, ctx) {
   const mode = ctx.mode === 'academic' ? 'academic' : 'official';
-  const state = {
-    mode,
-    messages: [],
-    threads: [],
-    threadId: null,
-    library: null,
-    selectedSites: new Set(),
-    siteQuery: '',
-    sending: false,
-    controller: null
-  };
+  const state = sessionFor(mode);
 
   el.innerHTML = `<div class="chat-page">
     <section class="chat-main">
@@ -70,6 +169,9 @@ export async function renderChat(el, ctx) {
   const logEl = el.querySelector('#chatLog');
   const input = el.querySelector('#chatInput');
   const sendBtn = el.querySelector('#sendBtn');
+  let renderedCount = -1;
+  // 注册当前视图：流式输出进行中时切换页面，回来仍然能实时更新
+  state.view = { el, refresh: () => refreshFromSession(), loadThreads: () => loadThreads() };
 
   el.querySelectorAll('[data-mode]').forEach((tab) => {
     tab.addEventListener('click', () => {
@@ -174,26 +276,8 @@ export async function renderChat(el, ctx) {
   }
 
   async function persistThread() {
-    const messages = state.messages
-      .filter((message) => message.content && String(message.content).trim())
-      .map((message) => ({
-        role: message.role,
-        content: message.content,
-        sources: message.sources || [],
-        insufficient: !!message.insufficient,
-        error: message.error || ''
-      }));
-    if (!messages.length) return;
-    try {
-      if (!state.threadId) {
-        const created = await api.post('/api/chat/threads', { mode });
-        state.threadId = Number(created.id);
-      }
-      await api.put(`/api/chat/threads/${state.threadId}`, { messages });
-      await loadThreads();
-    } catch (error) {
-      // 保存失败不影响本次对话
-    }
+    // 统一走模块级的 persistSession，保证切换页面后仍能保存
+    await persistSession(state);
   }
 
   function renderLibraryCard() {
@@ -343,6 +427,7 @@ export async function renderChat(el, ctx) {
   }
 
   function renderLog() {
+    renderedCount = state.messages.length;
     if (!state.messages.length) {
       logEl.innerHTML = emptyHtml();
       bindPrompts();
@@ -376,6 +461,19 @@ export async function renderChat(el, ctx) {
     logEl.scrollTop = logEl.scrollHeight;
   }
 
+  /* 会话状态变了就刷新视图：条数没变时只更新最后一条气泡，避免整页重绘。 */
+  function refreshFromSession() {
+    const count = state.messages.length;
+    const last = count ? state.messages[count - 1] : null;
+    if (count === renderedCount && last && last.streaming) {
+      updateStreamingBubble(count - 1);
+    } else {
+      renderLog();
+    }
+    setSending(state.sending);
+    renderThreadCard();
+  }
+
   function setSending(value) {
     state.sending = value;
     sendBtn.disabled = false;
@@ -384,12 +482,13 @@ export async function renderChat(el, ctx) {
     sendBtn.classList.toggle('stopping', value);
     sendBtn.style.background = value ? 'var(--red-600)' : '';
     input.placeholder = value ? '正在回答… 可点击右侧停止' : (state.mode === 'official' ? '问一个关于学校官网文件的问题…' : '问一个学业问题，例如概念、方法或复习计划…');
-    el.querySelector('#composerHint').textContent = value ? '正在生成，请稍候' : (state.mode === 'official' ? '回答只依据已采集的官网文件，并附原文链接' : 'AI 可能出错，请自行核对');
+    const hint = el.querySelector('#composerHint');
+    if (hint) hint.textContent = value ? '正在生成，请稍候' : (state.mode === 'official' ? '回答只依据已采集的官网文件，并附原文链接' : 'AI 可能出错，请自行核对');
   }
 
   async function send() {
     if (state.sending) {
-      if (state.controller) state.controller.abort();
+      stopSession(state);
       return;
     }
     const text = input.value.trim();
@@ -406,70 +505,17 @@ export async function renderChat(el, ctx) {
     input.value = '';
     input.style.height = 'auto';
     state.messages.push({ role: 'user', content: text });
-    const assistantIndex = state.messages.length;
     state.messages.push({ role: 'assistant', content: '', sources: [], streaming: true });
-    renderLog();
-    setSending(true);
-    const controller = new AbortController();
-    state.controller = controller;
-    const siteIds = state.mode === 'official' && state.selectedSites.size
-      ? Array.from(state.selectedSites).map(Number)
-      : [];
     const history = state.mode === 'academic'
       ? state.messages.slice(0, -2).slice(-8).map((m) => ({ role: m.role, content: m.content }))
       : [];
-    const path = state.mode === 'official' ? '/api/chat/official/stream' : '/api/chat/academic/stream';
-    try {
-      await streamRequest(path, {
-        question: text,
-        site_ids: siteIds,
-        history
-      }, (event) => {
-        const assistant = state.messages[assistantIndex];
-        if (event.type === 'sources') {
-          assistant.sources = event.sources || [];
-        } else if (event.type === 'delta') {
-          assistant.content += event.text || '';
-          updateStreamingBubble(assistantIndex);
-        } else if (event.type === 'done') {
-          assistant.content = event.answer || assistant.content;
-          assistant.sources = event.sources || assistant.sources || [];
-          assistant.insufficient = !!event.insufficient;
-          assistant.streaming = false;
-          renderLog();
-          persistThread();
-        } else if (event.type === 'error') {
-          assistant.error = event.detail || '回答失败，请稍后重试';
-          assistant.streaming = false;
-          renderLog();
-          toast(assistant.error, 'error');
-          persistThread();
-        }
-      }, { signal: controller.signal });
-    } catch (error) {
-      if (error && error.name === 'AbortError') {
-        const assistant = state.messages[assistantIndex];
-        if (assistant) {
-          assistant.streaming = false;
-          assistant.content = assistant.content ? `${assistant.content}\n\n（已停止生成）` : '（已停止生成）';
-          renderLog();
-          persistThread();
-        }
-      } else {
-        const assistant = state.messages[assistantIndex];
-        if (assistant) {
-          assistant.streaming = false;
-          assistant.error = error.message || '请求失败，请稍后重试';
-          renderLog();
-          persistThread();
-        }
-        toast(error.message || '请求失败', 'error');
-      }
-    } finally {
-      if (state.controller === controller) state.controller = null;
-      setSending(false);
-      input.focus();
-    }
+    const siteIds = state.mode === 'official' && state.selectedSites.size
+      ? Array.from(state.selectedSites).map(Number)
+      : [];
+    renderLog();
+    setSending(true);
+    // 不 await：切换页面后这条流仍在跑，结果会写回 session
+    runChatStream(state, text, siteIds, history);
   }
 
   function openModelSettings() {
@@ -592,7 +638,9 @@ export async function renderChat(el, ctx) {
   } else {
     chatStatus();
   }
+  refreshFromSession();
   const threads = await loadThreads();
-  if (threads.length) await openThread(threads[0].id);
+  // 有正在进行的输出时不要用历史覆盖它
+  if (!state.messages.length && !state.sending && threads.length) await openThread(threads[0].id);
   input.focus();
 }

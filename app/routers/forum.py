@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+from datetime import timedelta
 from typing import Literal
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
@@ -28,6 +29,7 @@ class PostCreate(BaseModel):
     title: str = Field(min_length=4, max_length=80)
     body: str = Field(min_length=1, max_length=8000)
     tags: list[str] = Field(min_length=1, max_length=3)
+    board: str = Field(default="", max_length=20)
     anonymous: bool = False
 
 
@@ -35,6 +37,7 @@ class PostUpdate(BaseModel):
     title: str | None = Field(default=None, min_length=4, max_length=80)
     body: str | None = Field(default=None, min_length=1, max_length=8000)
     tags: list[str] | None = Field(default=None, min_length=1, max_length=3)
+    board: str | None = Field(default=None, max_length=20)
     anonymous: bool | None = None
 
 
@@ -95,9 +98,16 @@ def list_tags():
     return {"tags": forum_service.tag_counts(), "all": TAGS}
 
 
+@router.get("/boards")
+def list_boards():
+    return {"boards": forum_service.board_counts()}
+
+
 @router.get("/posts")
 def list_posts(
     tag: str = "",
+    board: str = "",
+    range: Literal["all", "day", "week", "month"] = "all",
     sort: Literal["new", "hot", "following"] = "new",
     q: str = "",
     page: int = 1,
@@ -114,6 +124,29 @@ def list_posts(
             raise HTTPException(status_code=400, detail="标签无效")
         conditions.append("p.tags LIKE ?")
         params.append(f'%"{tag}"%')
+    if board:
+        if board not in forum_service.BOARD_KEYS:
+            raise HTTPException(status_code=400, detail="版面无效")
+        # 旧帖子 board 为空：按标签推导出的版面也算进来
+        board_tags = [
+            key for key, value in forum_service.TAG_TO_BOARD.items() if value == board
+        ]
+        clauses = ["p.board = ?"]
+        params.append(board)
+        if board_tags:
+            clauses.append(
+                "(p.board = '' AND ("
+                + " OR ".join("p.tags LIKE ?" for _ in board_tags)
+                + "))"
+            )
+            params.extend(f'%"{item}"%' for item in board_tags)
+        conditions.append("(" + " OR ".join(clauses) + ")")
+    if range != "all":
+        from ..timeutil import iso, now_utc
+
+        days = {"day": 1, "week": 7, "month": 30}[range]
+        conditions.append("p.created_at >= ?")
+        params.append(iso(now_utc() - timedelta(days=days)))
     if q.strip():
         needle = f"%{q.strip()[:50]}%"
         conditions.append("(p.title LIKE ? OR p.body LIKE ?)")
@@ -175,14 +208,16 @@ def create_post(
     from ..timeutil import iso, now_utc
 
     with db() as conn:
+        board = forum_service.resolve_board(payload.board, tags)
         cur = conn.execute(
-            "INSERT INTO posts (author_id, title, body, tags, anonymous, status, moderation, "
-            "created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO posts (author_id, title, body, tags, board, anonymous, status, moderation, "
+            "created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 user["id"],
                 title,
                 body,
                 json.dumps(tags, ensure_ascii=False),
+                board,
                 1 if payload.anonymous else 0,
                 status,
                 _moderation_payload(verdict),

@@ -312,6 +312,10 @@ export async function renderProfile(el, ctx) {
                 ${(meta.news_categories || []).map((cat) => `<label class="chip" style="cursor:pointer"><input type="checkbox" name="newsCat" value="${esc(cat.key)}" ${(user.settings?.news_categories || []).includes(cat.key) ? 'checked' : ''} style="accent-color:var(--teal-500)"> ${esc(cat.label)}</label>`).join('')}
               </div>
             </div>
+            <div class="field"><span class="field-label">自定义热点话题</span>
+              <div id="newsTopicsEditor">${tagEditor(user.settings?.news_topics || [], '输入话题后回车，例如：AI、考研、新能源')}</div>
+              <span class="hint">填什么就按什么去查热点（公开新闻源），可以填多个。</span>
+            </div>
           </div>
         </section>
 
@@ -362,6 +366,7 @@ export async function renderProfile(el, ctx) {
 
   bindTagEditor(el.querySelector('#directionsEditor'));
   bindTagEditor(el.querySelector('#coursesEditor'));
+  bindTagEditor(el.querySelector('#newsTopicsEditor'));
 
   el.querySelectorAll('[data-avatar]').forEach((button) => {
     button.addEventListener('click', () => {
@@ -447,7 +452,12 @@ export async function renderProfile(el, ctx) {
         directions,
         courses,
         avatar: avatarValue,
-        settings: { news_categories: newsCats, notify_channels: channels, theme: themeValue }
+        settings: {
+          news_categories: newsCats,
+          news_topics: readTagEditor(el.querySelector('#newsTopicsEditor')),
+          notify_channels: channels,
+          theme: themeValue
+        }
       });
       store.user = { ...store.user, ...result.user };
       toast('资料已保存', 'success');

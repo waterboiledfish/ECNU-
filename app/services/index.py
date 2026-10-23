@@ -51,8 +51,12 @@ def build_index(force: bool = False) -> dict[str, Any]:
                 """
             ).fetchall()
         if cutoff:
-            # 超出收录窗口的旧文件不参与检索；没有发布日期的不受影响
-            rows = [row for row in rows if not recency.is_too_old(row["published_at"])]
+            # 超出收录窗口的旧文件不参与检索；没有发布日期的不受影响。
+            # 注意：这里必须传入已算好的 cutoff，逐行查 meta 表会把整页拖到几十秒。
+            rows = [
+                row for row in rows
+                if not recency.is_too_old(row["published_at"], cutoff=cutoff)
+            ]
         postings: dict[str, list[tuple[int, int]]] = defaultdict(list)
         lengths: dict[int, int] = {}
         docs: dict[int, dict[str, Any]] = {}

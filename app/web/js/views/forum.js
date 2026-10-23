@@ -27,13 +27,14 @@ function authorHtml(author, mine = false) {
 
 function postCard(post) {
   const tags = (post.tags || []).map((tag) => `<a class="tag tag-navy" href="#/forum?tag=${encodeURIComponent(tag)}">${esc(tag)}</a>`).join('');
+  const boardTag = post.board ? `<a class="tag tag-teal" href="#/forum?board=${encodeURIComponent(post.board)}">${esc(post.board_name || '版面')}</a>` : '';
   return `<article class="post-card" data-post="${post.id}">
     <div class="post-top">
       ${authorHtml(post.author, post.mine)}
       <span>·</span><span>${timeAgo(post.created_at)}</span>
       ${post.status !== 'visible' ? statusBadge(post.status) : ''}
       <span class="right"></span>
-      ${tags}
+      ${boardTag}${tags}
     </div>
     <h3 class="post-title"><a href="#/forum/${post.id}">${esc(post.title)}</a></h3>
     <p class="post-excerpt">${esc(post.body).replace(/\n/g, ' ')}</p>
@@ -113,18 +114,37 @@ function appealDialog(targetType, targetId) {
 
 /* ------------------------------------------------------------ 列表 */
 export async function renderForumList(el, ctx) {
-  const state = { tag: ctx.query?.get('tag') || '', sort: 'new', q: '', page: 1, size: 10, data: null };
+  const state = {
+    tag: ctx.query?.get('tag') || '',
+    board: ctx.query?.get('board') || '',
+    range: 'all',
+    sort: 'new',
+    q: '',
+    page: 1,
+    size: 10,
+    boards: [],
+    data: null
+  };
   el.innerHTML = loadingBlock('正在打开论坛…');
   await load(true);
 
   async function load(reset = false) {
     if (reset) state.page = 1;
+    if (!state.boards.length) {
+      try {
+        state.boards = (await api.get('/api/forum/boards')).boards || [];
+      } catch (error) {
+        state.boards = [];
+      }
+    }
     const params = new URLSearchParams({
       sort: state.sort,
+      range: state.range,
       page: String(state.page),
       size: String(state.size)
     });
     if (state.tag) params.set('tag', state.tag);
+    if (state.board) params.set('board', state.board);
     if (state.q) params.set('q', state.q);
     const data = await api.get(`/api/forum/posts?${params.toString()}`);
     if (reset) state.data = data;
@@ -164,11 +184,18 @@ export async function renderForumList(el, ctx) {
               <button data-sort="hot" class="${state.sort === 'hot' ? 'active' : ''}">热门</button>
               <button data-sort="following" class="${state.sort === 'following' ? 'active' : ''}">关注</button>
             </div>
-            <input class="input input-sm" id="forumSearch" placeholder="搜索帖子标题或内容" value="${esc(state.q)}" style="max-width:260px">
+            <div class="segmented" id="forumRange">
+              ${[['all', '全部'], ['day', '今日'], ['week', '本周'], ['month', '本月']].map(([value, label]) => `<button data-range="${value}" class="${state.range === value ? 'active' : ''}">${label}</button>`).join('')}
+            </div>
+            <input class="input input-sm" id="forumSearch" placeholder="搜索帖子标题或内容" value="${esc(state.q)}" style="max-width:220px">
             <span class="tiny muted right">${state.data.total} 条帖子</span>
           </div>
+          <div class="chip-row" id="forumBoards">
+            <button class="chip ${!state.board ? 'active' : ''}" data-board="">全部版面</button>
+            ${(state.boards || []).map((board) => `<button class="chip ${state.board === board.key ? 'active' : ''}" data-board="${esc(board.key)}">${esc(board.group)} · ${esc(board.name)} <span class="count">${board.count}</span></button>`).join('')}
+          </div>
           <div class="chip-row">
-            <button class="chip ${!state.tag ? 'active' : ''}" data-tag="">全部</button>
+            <button class="chip ${!state.tag ? 'active' : ''}" data-tag="">全部标签</button>
             ${tags.map((tag) => {
               const count = (state.data.tags || []).find((item) => item.key === tag.key)?.count || 0;
               return `<button class="chip ${state.tag === tag.key ? 'active' : ''}" data-tag="${esc(tag.key)}">${esc(tag.key)} <span class="count">${count}</span></button>`;
@@ -178,12 +205,9 @@ export async function renderForumList(el, ctx) {
         </div>
         <aside class="forum-side">
           <div class="card pad-sm">
-            <div class="section-title">${icon('users')} 版块</div>
+            <div class="section-title">${icon('users')} 版面</div>
             <div class="tag-list">
-              ${tags.map((tag) => {
-                const count = (state.data.tags || []).find((item) => item.key === tag.key)?.count || 0;
-                return `<button class="tag-row" data-tag="${esc(tag.key)}"><span>${esc(tag.key)}<span class="tiny muted" style="display:block;font-weight:400">${esc(tag.desc || '')}</span></span><span class="count">${count}</span></button>`;
-              }).join('')}
+              ${(state.boards || []).map((board) => `<button class="tag-row" data-board="${esc(board.key)}"><span>${esc(board.name)}<span class="tiny muted" style="display:block;font-weight:400">${esc(board.group)} · ${esc(board.desc || '')}</span></span><span class="count">${board.count}</span></button>`).join('')}
             </div>
           </div>
           ${guidelinesCard()}
@@ -208,6 +232,18 @@ export async function renderForumList(el, ctx) {
     el.querySelectorAll('[data-tag]').forEach((button) => {
       button.addEventListener('click', () => {
         state.tag = button.getAttribute('data-tag');
+        load(true).catch((error) => toast(error.message, 'error'));
+      });
+    });
+    el.querySelectorAll('[data-board]').forEach((button) => {
+      button.addEventListener('click', () => {
+        state.board = button.getAttribute('data-board') || '';
+        load(true).catch((error) => toast(error.message, 'error'));
+      });
+    });
+    el.querySelectorAll('#forumRange [data-range]').forEach((button) => {
+      button.addEventListener('click', () => {
+        state.range = button.getAttribute('data-range');
         load(true).catch((error) => toast(error.message, 'error'));
       });
     });
@@ -469,6 +505,12 @@ export async function renderForumPost(el, ctx) {
 /* ------------------------------------------------------------ 发帖 */
 export async function renderForumNew(el, ctx) {
   const tags = (store.meta?.forum_tags) || TAGS_FALLBACK;
+  let boards = [];
+  try {
+    boards = (await api.get('/api/forum/boards')).boards || [];
+  } catch (error) {
+    boards = [];
+  }
   el.innerHTML = `<div class="view-page">
     <div class="flex"><a class="btn btn-sm btn-ghost" href="#/forum">${icon('arrowLeft')}返回论坛</a></div>
     <div class="grid grid-main-side">
@@ -476,6 +518,12 @@ export async function renderForumNew(el, ctx) {
         <div class="page-head" style="margin-bottom:18px"><div><h2>发布帖子</h2><p>分享经验、生活、寻物或学习问题。发布后可能需要短暂审核。</p></div></div>
         <form id="postForm" class="stack">
           <div class="field"><label for="postTitle">标题</label><input class="input" id="postTitle" maxlength="80" required placeholder="一句话说明你想聊什么"></div>
+          <div class="field"><label for="postBoard">版面</label>
+            <select class="select" id="postBoard">
+              ${(boards.length ? boards : [{ key: 'life', name: '生活分享', group: '生活' }]).map((board) => `<option value="${esc(board.key)}">${esc(board.group)} · ${esc(board.name)}</option>`).join('')}
+            </select>
+            <span class="hint">选一个最贴近的版面，方便同学找到你的帖子。</span>
+          </div>
           <div class="field"><span class="field-label">选择标签（1-3 个）</span>
             <div class="chip-row">${tags.map((tag) => `<label class="chip" style="cursor:pointer"><input type="checkbox" name="tag" value="${esc(tag.key)}" style="accent-color:var(--teal-500)"> ${esc(tag.key)}</label>`).join('')}</div>
             <span class="hint">${esc(tags.map((tag) => `${tag.key}：${tag.desc}`).join('；'))}</span>
@@ -508,6 +556,7 @@ export async function renderForumNew(el, ctx) {
         title,
         body,
         tags: selected,
+        board: el.querySelector('#postBoard')?.value || '',
         anonymous: el.querySelector('#postAnonymous').checked
       });
       toast(result.message || '发布成功', 'success', 4500);

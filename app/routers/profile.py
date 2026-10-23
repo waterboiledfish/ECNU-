@@ -24,6 +24,7 @@ NICK_RE = re.compile(r"^[\u4e00-\u9fffA-Za-z0-9_·\-]{2,16}$")
 ALLOWED_SETTINGS = {
     "theme",
     "news_categories",
+    "news_topics",
     "notify_channels",
     "show_grade",
     "compact",
@@ -66,6 +67,13 @@ def _sanitize_settings(current: dict, incoming: dict) -> dict:
             merged[key] = value
         elif key == "news_categories" and isinstance(value, list):
             merged[key] = [str(v)[:20] for v in value[:8] if isinstance(v, (str, int))]
+        elif key == "news_topics" and isinstance(value, list):
+            topics = []
+            for item in value[:8]:
+                text = str(item).strip()[:20]
+                if text and text not in topics:
+                    topics.append(text)
+            merged[key] = topics
         elif key == "notify_channels" and isinstance(value, list):
             allowed = set(notifier.channels_available())
             merged[key] = [str(v) for v in value[:4] if str(v) in allowed]

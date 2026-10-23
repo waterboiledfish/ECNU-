@@ -204,6 +204,120 @@ def main() -> int:
             value = page.evaluate("() => document.querySelector('#ageSelect')?.value")
             failures += 0 if check("切换收录范围会保存", value == "365", f'现在 {value}') else 1
 
+        # ------------------------------------------------------- 官网目录加载
+        page.evaluate("() => { location.hash = '#/tasks' }")
+        page.wait_for_timeout(300)
+        page.evaluate("() => { location.hash = '#/sources' }")
+        loaded = False
+        for _ in range(24):
+            page.wait_for_timeout(500)
+            text = page.evaluate("() => document.querySelector('#view')?.innerText || ''")
+            if "收录范围" in text and "正在读取官网目录" not in text:
+                loaded = True
+                break
+        failures += 0 if check("官网文件页能在 12 秒内加载完成", loaded) else 1
+
+        # ------------------------------------------------------- 学习资料直链
+        page.evaluate("() => { location.hash = '#/study' }")
+        page.wait_for_timeout(4000)
+        study = page.evaluate(
+            """() => ({
+              hasLiveBox: Boolean(document.querySelector('#studyLive')),
+              liveLinks: document.querySelectorAll('#studyLive .live-item').length,
+              listItems: document.querySelectorAll('#studyList .resource-card').length,
+              error: (document.querySelector('#studyList')?.innerText || '').includes('暂时不可用')
+            })"""
+        )
+        failures += 0 if check(
+            "学习资料页正常渲染（含可直接点开的条目）",
+            study["hasLiveBox"] and not study["error"] and (study["liveLinks"] > 0 or study["listItems"] > 0),
+            f'直链 {study["liveLinks"]} 条 / 检索卡片 {study["listItems"]} 张',
+        ) else 1
+
+        # ------------------------------------------------------- 热点自定义话题
+        page.evaluate("() => { location.hash = '#/news' }")
+        page.wait_for_timeout(1200)
+        news = page.evaluate(
+            """() => ({
+              topics: Boolean(document.querySelector('#newsTopics')),
+              categories: document.querySelectorAll('#newsTabs .tab').length
+            })"""
+        )
+        failures += 0 if check(
+            "热点页有自定义话题入口", news["topics"] and news["categories"] >= 5,
+        ) else 1
+
+        # ------------------------------------------------------- 论坛版面与筛选
+        page.evaluate("() => { location.hash = '#/forum' }")
+        page.wait_for_timeout(1800)
+        forum = page.evaluate(
+            """() => ({
+              boards: document.querySelectorAll('#forumBoards .chip').length,
+              ranges: document.querySelectorAll('#forumRange button').length
+            })"""
+        )
+        failures += 0 if check(
+            "论坛有版面与时间筛选", forum["boards"] >= 5 and forum["ranges"] == 4,
+            f'版面 {forum["boards"]} 个 / 时间 {forum["ranges"]} 档',
+        ) else 1
+        page.click("#forumRange [data-range='day']")
+        page.wait_for_timeout(1200)
+        page.click("#forumBoards [data-board='study']")
+        page.wait_for_timeout(1200)
+        active = page.evaluate("() => Boolean(document.querySelector('#forumBoards .chip.active'))")
+        failures += 0 if check("切换版面与时间后列表仍可用", active) else 1
+
+        # ------------------------------------------------------- 计划词库选择
+        page.evaluate("() => { location.hash = '#/plans' }")
+        page.wait_for_timeout(1200)
+        page.click("#newPlanBtn")
+        page.wait_for_timeout(400)
+        vocab = page.evaluate(
+            """() => {
+              const category = document.querySelector('#planCategory');
+              category.value = 'vocab';
+              category.dispatchEvent(new Event('change'));
+              const field = document.querySelector('#wordLevelField');
+              const select = document.querySelector('#planWordLevel');
+              return { visible: field && field.style.display !== 'none', options: select ? select.options.length : 0 };
+            }"""
+        )
+        failures += 0 if check(
+            "词汇计划可选四级 / 六级词库", vocab["visible"] and vocab["options"] == 2,
+        ) else 1
+        page.keyboard.press("Escape")
+
+        # --------------------------------------------------- 切换页面不中断输出
+        page.route(
+            "**/api/chat/official/stream",
+            lambda route: route.fulfill(
+                status=200,
+                headers={"Content-Type": "text/event-stream", "Cache-Control": "no-store"},
+                body=(
+                    'data: {"type": "sources", "sources": []}\n\n'
+                    'data: {"type": "delta", "text": "这是跨页面继续输出的回答。"}\n\n'
+                    'data: {"type": "done", "answer": "这是跨页面继续输出的回答。", "sources": [], "insufficient": false}\n\n'
+                ),
+            ),
+        )
+        page.evaluate(
+            """async () => {
+              const mod = await import('/static/js/store.js');
+              mod.saveLLM({ key: 'sk-test-0000000000', model: 'mock-model', base_url: 'http://127.0.0.1:1/v1', provider: '' });
+            }"""
+        )
+        page.evaluate("() => { location.hash = '#/ask' }")
+        page.wait_for_timeout(1200)
+        page.fill("#chatInput", "测试跨页面输出")
+        page.keyboard.press("Enter")
+        page.wait_for_timeout(1500)
+        page.evaluate("() => { location.hash = '#/tasks' }")
+        page.wait_for_timeout(500)
+        page.evaluate("() => { location.hash = '#/ask' }")
+        page.wait_for_timeout(1500)
+        kept = page.evaluate("() => (document.querySelector('#chatLog')?.innerText || '').includes('跨页面继续输出')")
+        failures += 0 if check("切到别的页面再回来，回答仍在", kept) else 1
+
         failures += 0 if check("页面无 JS 异常", not errors, "; ".join(errors[:3])) else 1
         browser.close()
 

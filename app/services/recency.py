@@ -52,11 +52,16 @@ def published_day(value: str | None) -> str | None:
     return match.group(0) if match else None
 
 
-def is_too_old(published_at: str | None, days: int | None = None) -> bool:
+def is_too_old(published_at: str | None, days: int | None = None, cutoff: str | None = None) -> bool:
+    """判断一份文件是否超出收录窗口。
+
+    大量调用（例如建索引）请传 cutoff：否则每次都会读一次 meta 表，
+    几千条就是几千次数据库连接。
+    """
     day = published_day(published_at)
     if not day:
         return False
-    cut = cutoff_day(days)
+    cut = cutoff if cutoff is not None else cutoff_day(days)
     if not cut:
         return False
     return day < cut

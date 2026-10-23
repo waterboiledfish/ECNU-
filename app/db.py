@@ -52,6 +52,11 @@ def _migrate(conn: sqlite3.Connection) -> None:
     plan_columns = {row["name"] for row in conn.execute("PRAGMA table_info(plans)").fetchall()}
     if "category_label" not in plan_columns:
         conn.execute("ALTER TABLE plans ADD COLUMN category_label TEXT NOT NULL DEFAULT ''")
+    if "word_level" not in plan_columns:
+        conn.execute("ALTER TABLE plans ADD COLUMN word_level TEXT NOT NULL DEFAULT 'cet6'")
+    post_columns = {row["name"] for row in conn.execute("PRAGMA table_info(posts)").fetchall()}
+    if "board" not in post_columns:
+        conn.execute("ALTER TABLE posts ADD COLUMN board TEXT NOT NULL DEFAULT ''")
 
 
 def _seed_sites(conn: sqlite3.Connection) -> None:

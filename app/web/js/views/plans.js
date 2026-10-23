@@ -61,7 +61,7 @@ export async function renderPlans(el, ctx) {
     }).join('');
     const info = vocabInfo[plan.id];
     const vocabBadge = plan.category === 'vocab' && info
-      ? `<span class="tag ${info.due ? 'tag-amber' : 'tag-teal'}">${info.due ? `待复习 ${info.due}` : `已学 ${info.learned}`}</span>`
+      ? `<span class="tag ${info.due ? 'tag-amber' : 'tag-teal'}">${plan.word_level === 'cet4' ? '四级' : '六级'} · ${info.due ? `待复习 ${info.due}` : `已学 ${info.learned}`}</span>`
       : '';
     return `<article class="plan-card" data-id="${plan.id}">
       <div class="plan-top">
@@ -114,7 +114,7 @@ export async function renderPlans(el, ctx) {
         desc: '从一个简单描述开始：「每天晚上练 30 分钟吉他」「每周读一本书」。目标数量可以不填，打卡就算完成。',
         action: '<button class="btn btn-primary" id="emptyPlanBtn" type="button">创建第一个计划</button>'
       })}
-      <div class="notice notice-info">${icon('info')}<div>设置提醒时间后，到点会收到应用内通知与浏览器通知；勾选系统弹窗还会在本机弹出提醒。类别选「词汇」时，还可以用内置六级词库做间隔复习。</div></div>
+      <div class="notice notice-info">${icon('info')}<div>设置提醒时间后，到点会收到应用内通知与浏览器通知；勾选系统弹窗还会在本机弹出提醒。类别选「词汇」时，可以选四级或六级词库做间隔复习。</div></div>
     </div>`;
     bind();
   }
@@ -166,7 +166,7 @@ export async function renderPlans(el, ctx) {
   function openForm(plan) {
     const isEdit = !!plan;
     const initial = plan || {
-      title: '', category: 'custom', category_label: '', cadence: 'daily', weekdays: [],
+      title: '', category: 'custom', category_label: '', word_level: 'cet6', cadence: 'daily', weekdays: [],
       target_count: 0, unit: '次', reminder_time: '21:00', note: '', active: true
     };
     const hasTarget = (Number(initial.target_count) || 0) > 0;
@@ -187,6 +187,13 @@ export async function renderPlans(el, ctx) {
         <div class="field" id="categoryLabelField" style="${initial.category === 'custom' ? '' : 'display:none'}">
           <label for="planCategoryLabel">自定义类型名称</label>
           <input class="input" id="planCategoryLabel" maxlength="20" value="${esc(initial.category_label || '')}" placeholder="例如：吉他练习 / 书法">
+        </div>
+        <div class="field" id="wordLevelField" style="${initial.category === 'vocab' ? '' : 'display:none'}">
+          <label for="planWordLevel">词库</label>
+          <select class="select" id="planWordLevel">
+            <option value="cet4" ${initial.word_level === 'cet4' ? 'selected' : ''}>四级词汇（独立词库）</option>
+            <option value="cet6" ${initial.word_level !== 'cet4' ? 'selected' : ''}>六级词汇（独立词库）</option>
+          </select>
         </div>
         <div class="field"><label for="planCadence">频率</label>
           <select class="select" id="planCadence">
@@ -232,6 +239,7 @@ export async function renderPlans(el, ctx) {
         const unit = root.querySelector('#planUnit');
         category.addEventListener('change', () => {
           labelField.style.display = category.value === 'custom' ? '' : 'none';
+          root.querySelector('#wordLevelField').style.display = category.value === 'vocab' ? '' : 'none';
           const meta = CATEGORY[category.value];
           if (!isEdit && meta && useTarget.checked) { target.value = meta.target; unit.value = meta.unit; }
         });
@@ -253,6 +261,7 @@ export async function renderPlans(el, ctx) {
             title,
             category: category.value,
             category_label: categoryLabel,
+            word_level: root.querySelector('#planWordLevel').value || 'cet6',
             cadence: cadence.value,
             weekdays,
             target_count: useTarget.checked ? (Number(target.value) || 1) : 0,
@@ -295,7 +304,7 @@ export async function renderPlans(el, ctx) {
     const modal = openModal({
       title: `开始背诵 · ${plan.title}`,
       body: `<div class="stack">
-        <p class="small soft" style="line-height:1.7">今天有 <strong>${info.due || 0}</strong> 个到期复习词，已学 <strong>${info.learned || 0}</strong> 个。未填 API Key 时使用内置六级词库。</p>
+        <p class="small soft" style="line-height:1.7">今天有 <strong>${info.due || 0}</strong> 个到期复习词，已学 <strong>${info.learned || 0}</strong> 个。未填 API Key 时使用内置${plan.word_level === 'cet4' ? '四级' : '六级'}词库。</p>
         <div class="form-grid">
           <div class="field"><label for="vocabSize">本轮单词数</label><input class="input" id="vocabSize" type="number" min="5" max="30" value="${size}"></div>
           <div class="field"><label class="check" style="margin-top:22px"><input type="checkbox" id="vocabAI" ${store.llm.key ? '' : 'disabled'}><span><span class="check-title">AI 生成新词</span><span class="check-desc">${store.llm.key ? '会消耗你的 API 额度' : '需先配置 API Key'}</span></span></label></div>

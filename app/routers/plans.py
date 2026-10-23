@@ -20,20 +20,25 @@ from ..timeutil import iso, local_day, now_utc, parse_local_day
 router = APIRouter(prefix="/api/plans", tags=["plans"])
 
 CATEGORIES = ("vocab", "reading", "exercise", "skill", "custom")
-_WORD_FILE = Path(__file__).resolve().parent.parent / "data" / "cet6_words.json"
-_WORDS: list[dict] | None = None
+WORD_LEVELS = ("cet4", "cet6")
+_WORD_FILES = {
+    "cet4": Path(__file__).resolve().parent.parent / "data" / "cet4_words.json",
+    "cet6": Path(__file__).resolve().parent.parent / "data" / "cet6_words.json",
+}
+_WORDS: dict[str, list[dict]] = {}
 _TIME_RE = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
 
 
-def word_bank() -> list[dict]:
-    global _WORDS
-    if _WORDS is None:
+def word_bank(level: str = "cet6") -> list[dict]:
+    """内置词库：四级 / 六级分开，默认六级（保持旧调用兼容）。"""
+    key = level if level in _WORD_FILES else "cet6"
+    if key not in _WORDS:
         try:
-            data = json.loads(_WORD_FILE.read_text(encoding="utf-8"))
-            _WORDS = data if isinstance(data, list) else []
+            data = json.loads(_WORD_FILES[key].read_text(encoding="utf-8"))
+            _WORDS[key] = data if isinstance(data, list) else []
         except (OSError, json.JSONDecodeError):
-            _WORDS = []
-    return _WORDS
+            _WORDS[key] = []
+    return _WORDS[key]
 
 
 def _today() -> str:
@@ -103,6 +108,7 @@ def serialize_plan(conn, row) -> dict:
         "title": row["title"],
         "category": row["category"],
         "category_label": row["category_label"],
+        "word_level": row["word_level"],
         "cadence": row["cadence"],
         "weekdays": json.loads(row["weekdays"] or "[]"),
         "target_count": row["target_count"],
@@ -133,6 +139,7 @@ class PlanCreate(BaseModel):
     title: str = Field(min_length=1, max_length=60)
     category: Literal["vocab", "reading", "exercise", "skill", "custom"] = "custom"
     category_label: str = Field(default="", max_length=20)
+    word_level: Literal["cet4", "cet6"] = "cet6"
     cadence: Literal["daily", "weekly"] = "daily"
     weekdays: list[int] = Field(default_factory=list, max_length=7)
     # 0 表示不设数量目标，只按「今天做没做」打卡
@@ -147,6 +154,7 @@ class PlanUpdate(BaseModel):
     title: str | None = Field(default=None, min_length=1, max_length=60)
     category: Literal["vocab", "reading", "exercise", "skill", "custom"] | None = None
     category_label: str | None = Field(default=None, max_length=20)
+    word_level: Literal["cet4", "cet6"] | None = None
     cadence: Literal["daily", "weekly"] | None = None
     weekdays: list[int] | None = None
     target_count: int | None = Field(default=None, ge=0, le=999)
@@ -206,13 +214,15 @@ def create_plan(payload: PlanCreate, user: dict = Depends(get_current_user)):
     reminder_time = _validate_time(payload.reminder_time)
     with db() as conn:
         cur = conn.execute(
-            "INSERT INTO plans (user_id, title, category, category_label, cadence, weekdays, target_count, "
-            "unit, reminder_time, note, active, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO plans (user_id, title, category, category_label, word_level, cadence, weekdays, "
+            "target_count, unit, reminder_time, note, active, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 user["id"],
                 payload.title.strip(),
                 payload.category,
                 payload.category_label.strip()[:20],
+                payload.word_level,
                 payload.cadence,
                 json.dumps(weekdays),
                 payload.target_count,
@@ -243,6 +253,9 @@ def update_plan(plan_id: int, payload: PlanUpdate, user: dict = Depends(get_curr
     if "category_label" in fields and fields["category_label"] is not None:
         updates.append("category_label = ?")
         values.append(fields["category_label"].strip()[:20])
+    if "word_level" in fields and fields["word_level"]:
+        updates.append("word_level = ?")
+        values.append(fields["word_level"])
     if "cadence" in fields and fields["cadence"]:
         updates.append("cadence = ?")
         values.append(fields["cadence"])
@@ -366,8 +379,8 @@ def _learned_words(conn, user_id: int) -> set[str]:
     return {r["word"].lower() for r in rows}
 
 
-def _new_words(exclude: set[str], count: int) -> list[dict]:
-    bank = [w for w in word_bank() if w.get("word", "").lower() not in exclude]
+def _new_words(exclude: set[str], count: int, level: str = "cet6") -> list[dict]:
+    bank = [w for w in word_bank(level) if w.get("word", "").lower() not in exclude]
     random.shuffle(bank)
     picked = bank[:count]
     return [
@@ -383,17 +396,18 @@ def _new_words(exclude: set[str], count: int) -> list[dict]:
     ]
 
 
-def _ai_words(creds: dict, count: int, exclude: set[str]) -> list[dict]:
+def _ai_words(creds: dict, count: int, exclude: set[str], level: str = "cet6") -> list[dict]:
     avoid = "、".join(list(exclude)[:80]) or "无"
+    label = "四级" if level == "cet4" else "六级"
     messages = [
         {
             "role": "system",
-            "content": "你是大学英语六级词汇教练。只返回 JSON 数组，不要解释。",
+            "content": f"你是大学英语{label}词汇教练。只返回 JSON 数组，不要解释。",
         },
         {
             "role": "user",
             "content": (
-                f"生成 {count} 个大学英语六级核心词汇，排除这些词：{avoid}。\n"
+                f"生成 {count} 个大学英语{label}核心词汇，排除这些词：{avoid}。\n"
                 '返回格式：[{"word":"英文单词","phonetic":"音标","meaning":"词性 + 中文释义",'
                 '"example":"英文例句","example_cn":"中文翻译"}]。'
                 "每个单词与例句都要准确，不要编造拼写。"
@@ -457,13 +471,15 @@ def vocab_overview(plan_id: int, user: dict = Depends(get_current_user)):
             "ORDER BY id DESC LIMIT 1",
             (user["id"], plan_id),
         ).fetchone()
+    level = plan["word_level"] or "cet6"
     return {
         "plan_id": plan_id,
         "title": plan["title"],
+        "word_level": level,
         "learned": int(learned["n"]) if learned else 0,
         "due": int(due["n"]) if due else 0,
         "sessions": int(sessions["n"]) if sessions else 0,
-        "bank_size": len(word_bank()),
+        "bank_size": len(word_bank(level)),
         "last_session": dict(last) if last else None,
     }
 
@@ -479,6 +495,7 @@ def start_vocab(
         plan = _get_plan(conn, plan_id, user["id"])
         if plan["category"] != "vocab":
             raise HTTPException(status_code=400, detail="该计划不是词汇计划")
+        level = plan["word_level"] or "cet6"
         learned = _learned_words(conn, user["id"])
         due_count = max(5, payload.size // 2)
         items = _due_reviews(conn, user["id"], due_count) if payload.mode != "ai" else []
@@ -489,13 +506,13 @@ def start_vocab(
                 warning = "未填写 API Key，已使用内置词库。"
             else:
                 try:
-                    items.extend(_ai_words(creds, min(remaining, 20), used))
+                    items.extend(_ai_words(creds, min(remaining, 20), used, level))
                 except llm.LLMError as exc:
                     warning = f"AI 生成词汇失败：{exc.message}，已使用内置词库。"
                 used |= {item["word"].lower() for item in items}
                 remaining = payload.size - len(items)
         if remaining > 0:
-            items.extend(_new_words(used, remaining))
+            items.extend(_new_words(used, remaining, level))
         if not items:
             raise HTTPException(
                 status_code=400, detail="没有可学习的单词：词库已全部学过，且暂时无法调用 AI 生成"

@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 
 from ..deps import client_llm
 from ..security import enforce_rate, get_current_user
-from ..services import study
+from ..services import recs, study
 
 router = APIRouter(prefix="/api/study", tags=["study"])
 
@@ -19,6 +19,12 @@ def recommend(
     enforce_rate(request, "study", 40, 3600)
     creds = client_llm(request, required=False)
     try:
-        return study.recommend(user, creds, refresh)
+        payload = study.recommend(user, creds, refresh)
     except Exception:
         raise HTTPException(status_code=502, detail="学习资料推荐暂时不可用，请稍后刷新") from None
+    # 真实可点的视频/文档（B 站公开搜索，按播放量/浏览量排序）
+    try:
+        payload["live"] = recs.recommend(user, refresh)
+    except Exception:
+        payload["live"] = {"videos": [], "docs": [], "mode": "unavailable"}
+    return payload

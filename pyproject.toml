@@ -1,6 +1,6 @@
 [project]
 name = "ecnu-assistant"
-version = "1.0.2"
+version = "1.0.3"
 description = "面向华东师范大学学生的本地优先 AI 助手：官网文件问答、待办提醒、学习计划、论坛与推荐。"
 readme = "README.md"
 requires-python = ">=3.11"

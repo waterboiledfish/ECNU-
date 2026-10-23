@@ -17,6 +17,45 @@ TAGS = [
 
 TAG_KEYS = {item["key"] for item in TAGS}
 
+# 版面：帖子归属的大类（参考常见校园 BBS 的分区方式）
+BOARDS = [
+    {"key": "study", "name": "学习科研", "group": "学习", "desc": "课程、作业、科研与学术讨论"},
+    {"key": "exam", "name": "考研升学", "group": "学习", "desc": "考研、保研、出国与实习经验"},
+    {"key": "campus", "name": "校园信息", "group": "校园", "desc": "通知、后勤、食堂与社团活动"},
+    {"key": "lost", "name": "寻物启事", "group": "校园", "desc": "失物招领与寻物"},
+    {"key": "life", "name": "生活分享", "group": "生活", "desc": "日常、美食、旅行与吐槽"},
+    {"key": "tech", "name": "数码技术", "group": "兴趣", "desc": "编程、数码与效率工具"},
+    {"key": "trade", "name": "二手交易", "group": "交易", "desc": "闲置转让与求购"},
+]
+
+BOARD_KEYS = {item["key"] for item in BOARDS}
+BOARD_NAMES = {item["key"]: item["name"] for item in BOARDS}
+TAG_TO_BOARD = {"学习交流": "study", "经验分享": "exam", "生活分享": "life", "寻物启事": "lost"}
+
+
+def resolve_board(board: str | None, tags: list[str]) -> str:
+    """显式指定优先，否则按标签推导，最后落到「生活分享」。"""
+    if board in BOARD_KEYS:
+        return board
+    for tag in tags:
+        if tag in TAG_TO_BOARD:
+            return TAG_TO_BOARD[tag]
+    return "life"
+
+
+def board_counts() -> list[dict[str, Any]]:
+    counts: dict[str, int] = {}
+    with db() as conn:
+        rows = conn.execute(
+            "SELECT board, COUNT(*) AS n FROM posts WHERE status = 'visible' GROUP BY board"
+        ).fetchall()
+        for row in rows:
+            counts[row["board"] or ""] = int(row["n"])
+    result = []
+    for item in BOARDS:
+        result.append({**item, "count": counts.get(item["key"], 0)})
+    return result
+
 
 def parse_tags(raw: str | None) -> list[str]:
     try:
@@ -89,6 +128,10 @@ def serialize_post(conn, row, viewer_id: int, is_admin: bool = False) -> dict[st
         "title": row["title"],
         "body": row["body"],
         "tags": parse_tags(row["tags"]),
+        "board": row["board"] or resolve_board("", parse_tags(row["tags"])),
+        "board_name": BOARD_NAMES.get(
+            row["board"] or resolve_board("", parse_tags(row["tags"])), "生活分享"
+        ),
         "anonymous": bool(row["anonymous"]),
         "status": row["status"],
         "moderation": {
