@@ -89,6 +89,9 @@ def main() -> int:
         failures += 0 if check(
             "打开页面会自动载入最近一次对话", history["bubbles"] >= 2, f'{history["bubbles"]} 条消息',
         ) else 1
+        shots = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".ui-shots")
+        os.makedirs(shots, exist_ok=True)
+        page.screenshot(path=os.path.join(shots, "flows-chat-history.png"))
 
         # ---------------------------------------------------------- 计划表单
         page.evaluate("() => { location.hash = '#/plans' }")
@@ -140,6 +143,7 @@ def main() -> int:
             any("吉他练习" in text and "不设数量目标" in text for text in cards),
             str([text.split("\n")[:2] for text in cards][:1]),
         ) else 1
+        page.screenshot(path=os.path.join(shots, "flows-plans.png"))
 
         # ------------------------------------------------------- 个人设置
         page.evaluate("() => { location.hash = '#/me' }")
